@@ -81,7 +81,7 @@ jobs:
           port: ${{ secrets.SSH_PORT || '22' }}
           script: |
             set -eu
-            cd /opt/openGym
+            cd /opt/opengym
             git fetch origin main
             git reset --hard origin/main
             docker compose up -d --build
