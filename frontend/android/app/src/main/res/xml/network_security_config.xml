@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Issue #213: a self-hosted server behind a private CA (Caddy "tls internal", a home PKI).
+     Since API 24 an app trusts system CAs only, so the WebView refused the handshake while
+     Chrome on the same phone, which honours user-installed CAs, opened the server fine.
+     Trust both. A user CA is something the owner of the phone installed on purpose, behind a
+     system warning; this is the same trust the browser already gives it. Cleartext stays at
+     the platform default (off) everywhere except the one server named below. -->
+<network-security-config>
+    <base-config>
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+
+    <!-- One self-hosted server on a plain http:// address, reachable only on this phone's network.
+         The pairing screen accepts whatever address the owner types, so without this the request
+         fails at the platform with a bare "network error" and nothing explaining why (the same
+         failure issue #219 reported for the Coach endpoint). Scoped to this single host on
+         purpose: every other destination stays HTTPS-only, which is the rule the rest of the
+         config above is built on. Delete this block once the server has a certificate. -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">2.28.233.167</domain>
+    </domain-config>
+</network-security-config>

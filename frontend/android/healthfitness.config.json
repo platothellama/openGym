@@ -1,0 +1,14 @@
+{
+  "$comment": "Health Connect permissions declared into AndroidManifest.xml by @capacitor/health-fitness's cap-sync hook. Least privilege: session HR + calories, daily steps/sleep/recovery, optional SpO2 and scale weight. No background jobs (live polling only while a workout runs) and no >30-day history reads. Web/PWA builds never read this.",
+  "privacyPolicyUrl": "https://opengym.duarte-santos.ch",
+  "disableBackgroundJobs": true,
+  "disableReadHealthDataHistory": true,
+  "permissions": {
+    "HEART_RATE": "Read",
+    "CALORIES_BURNED": "Read",
+    "STEPS": "Read",
+    "SLEEP": "Read",
+    "OXYGEN_SATURATION": "Read",
+    "WEIGHT": "Read"
+  }
+}
