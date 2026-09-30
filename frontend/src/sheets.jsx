@@ -35,6 +35,7 @@ import { policyFor, defaultIncrement, POLICIES_FOR, POLICY_NAME, POLICY_DESC, MA
 import { normalizeRepRange } from './lib/rep-range.js'
 import { MOBILE, shareExport, printHtml } from './lib/mobile.js'
 import { speedUnitOf, toSpeed, fromSpeed } from './lib/speed.js'
+import { convertBodyWeight } from './lib/units.js'
 import { buildCompletedWorkout } from './lib/finish-workout.js'
 import { isWarmupRow, hasCompletedWork } from './lib/workout-model.js'
 import { saveSessionAsRoutine } from './lib/session-routines.js'
@@ -2222,15 +2223,19 @@ export function WorkoutRow({ w, onClick }) {
 /* ============================ workout lifecycle ============================ */
 // `routineIds` accepts `string | string[] | null` — `[r.id]` for one routine,
 // `effectiveRoutineIds(...)` for today's planned session, `[]` / null for explicit freestyle.
-export function startFlow(routineIds) {
+// `dayTag` is the training-day tag from the start chooser (`{ kind: 'day', n }` or
+// `{ kind: 'optional' }`); missing means untagged. Freestyle never carries a tag.
+export function startFlow(routineIds, dayTag = null) {
+  const tag = dayTag || null
   // The weigh-in is a setting (Settings → During a workout, issue #137): off goes straight
   // into the session with no body weight on it, same as "Start without weighing in".
-  if (S().weighIn === false) { beginWorkout(routineIds, null); return }
-  bwSheet({ required: true, onDone: bw => beginWorkout(routineIds, bw) })
+  if (S().weighIn === false) { beginWorkout(routineIds, null, tag); return }
+  bwSheet({ required: true, onDone: bw => beginWorkout(routineIds, bw, tag) })
 }
-export function beginWorkout(routineIds, bw) {
+export function beginWorkout(routineIds, bw, dayTag = null) {
   const st = S()
   const { entries, routineIds: rids, routines } = buildCombinedEntries(st, routineIds)
+  const tag = dayTag || null
   update(s => {
     s.active = {
       id: uid(), d: todayISO(), start: Date.now(),
@@ -2242,6 +2247,9 @@ export function beginWorkout(routineIds, bw) {
       // Snapshot the layout at start so the header ⋮ can change it for this session only —
       // changing the saved default (Settings → Workout view) mid-session leaves it alone.
       workoutView: st.workoutView || 'cards',
+      // Which training day this session covers (lib/plan-day.js). Written only when tagged,
+      // so an untagged session is byte-for-byte the shape it always was.
+      ...(tag ? { planDay: tag } : {}),
     }
   })
   useUI.getState().stopRest()
@@ -2741,4 +2749,39 @@ function doFinishWorkout() {
   useUI.getState().stopRest()
   beep(snd(), 880, 0.15); beep(snd(), 1100, 0.15, 0.18); beep(snd(), 1320, 0.3, 0.36)
   ui().openSheet(close => <FinishSummary w={shown} prs={prs} e1prs={e1prs} close={close} />, { kind: 'center', locked: true })
+}
+
+/* ============================ FitAI fuel helpers ============================ */
+// Seed a body-weight row from the linked FitAI profile: FitAI stores kilos, the profile
+// stores its own unit. Null when there is nothing to offer.
+export function seedWeight(profile, unit) {
+  const kg = profile?.body?.weightKg
+  if (!Number.isFinite(kg) || kg <= 0) return null
+  return unit === 'lb' ? convertBodyWeight(kg, 'kg', 'lb') : kg
+}
+
+// A fast shorter than this is not worth a line on its own.
+const PREWORKOUT_FAST_MIN = 60
+
+// One line under a workout for today's fuel so far: the fast in progress and what was
+// eaten, plus the week's deficit when the summary made one. Null when there is nothing
+// worth saying — no food, no long fast, no deficit.
+export function preWorkoutLine(fuel) {
+  const day = fuel?.day
+  if (!day) return null
+  const totals = day.totals || {}
+  const kcal = Number.isFinite(totals.kcal) ? totals.kcal : 0
+  const protein = Number.isFinite(totals.protein) ? totals.protein : 0
+  const meals = Array.isArray(day.meals) ? day.meals : []
+  const fastMin = Number.isFinite(day.fasting?.elapsedMin) ? day.fasting.elapsedMin : 0
+  const hasFood = kcal > 0 || protein > 0 || meals.length > 0
+  const hasFast = fastMin >= PREWORKOUT_FAST_MIN
+  const deficit = fuel?.summary?.nutrition?.deficitVsTarget
+  const hasDeficit = Number.isFinite(deficit) && deficit > 0
+  if (!hasFood && !hasFast && !hasDeficit) return null
+  const bits = []
+  if (hasFast) bits.push(`Fasted ${Math.floor(fastMin / 60)}h`)
+  if (hasFood) bits.push(`${kcal} kcal · ${protein}g protein`)
+  if (hasDeficit) bits.push(`${deficit} kcal under target`)
+  return bits.join(' · ')
 }

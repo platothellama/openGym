@@ -120,9 +120,12 @@ export default function CoachChat() {
 
   const ask = async (fn, line) => {
     setBusy(true)
+    // Filed before the request runs rather than after it: the demo build answers through a
+    // dynamic import that settles after this tick, and the thread should show what was asked
+    // while it loads. A refused request still toasts, as before.
+    update(s => appendChat(s, { role: 'user', kind: 'text', text: line }))
     try {
       await fn()
-      update(s => appendChat(s, { role: 'user', kind: 'text', text: line }))
       refresh()
     } catch (e) { toast(e.message || t('Could not ask the Coach')) }
     setBusy(false)

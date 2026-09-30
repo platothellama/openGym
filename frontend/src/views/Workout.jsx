@@ -46,23 +46,44 @@ function StartChooser() {
   const todayOvr = S.dayPlan[todayISO()] !== undefined
   const idSet = new Set(todayIds)
   const others = S.routines.filter(r => !idSet.has(r.id))
+  // The training-day tag: which plan day a new session covers. Driven by the coach profile's
+  // generic days (Day 1..N plus one lighter optional day) — never weekday names. Tapping a
+  // chip selects it, tapping it again deselects; the tag rides on startFlow into beginWorkout.
+  const profile = S.coach?.profile
+  const committed = profile ? Math.min(7, Math.max(1, Math.round(profile.daysPerWeek ?? 3) || 3)) : 0
+  const showOptional = profile ? profile.optionalDay === true && committed < 7 : false
+  const hasPicker = !!profile && committed > 0
+  const [dayTag, setDayTag] = useState(null)
+  const toggleDay = n => setDayTag(cur => (cur && cur.kind === 'day' && cur.n === n ? null : { kind: 'day', n }))
+  const toggleOptional = () => setDayTag(cur => (cur && cur.kind === 'optional' ? null : { kind: 'optional' }))
+  const tag = dayTag || null
   return <div className="narrow">
-    <div className="hdr"><div><h1>{t('Start workout')}</h1><div className="sub">{t(DAYN[new Date().getDay()])} — {todayRoutines.length ? t('today is {0}', todayName) : t('rest day, but no one’s stopping you')}</div></div></div>
+    <div className="hdr"><div><h1>{t('Start workout')}</h1><div className="sub">{todayRoutines.length ? t('today is {0}', todayName) : t('rest day, but no one’s stopping you')}</div></div></div>
+    {hasPicker && <>
+      <h4 className="sec">{t('Training day')}</h4>
+      <div className="chips">
+        {Array.from({ length: committed }, (_, i) => i + 1).map(n => (
+          <button key={n} className={'chip' + (dayTag && dayTag.kind === 'day' && dayTag.n === n ? ' on' : '')} onClick={() => toggleDay(n)}>{t('Day {0}', n)}</button>
+        ))}
+        {showOptional && <button className={'chip' + (dayTag && dayTag.kind === 'optional' ? ' on' : '')} onClick={toggleOptional}>{t('Optional')}</button>}
+      </div>
+      {dayTag && dayTag.kind === 'optional' && <div className="muted small">{t('Optional day — pick the plan')}</div>}
+    </>}
     {todayRoutines.length > 0 && <div className="card" style={{ borderColor: 'var(--acc)' }}>
       <h2 className="accent">{t("Today's plan")}{todayOvr ? ' · ' + t('rescheduled') : ''}</h2>
       <div className="row between" style={{ marginBottom: 12 }}>
         <div><div className="big">{todayName}</div><div className="muted small">{exCount(todayRoutines.reduce((n, r) => n + r.ex.length, 0))}</div></div>
         <span className="lrow-i" style={{ width: 38, height: 38, borderRadius: 9, fontSize: 22 }}><Icon name={glyphOf(todayRoutines[0].emoji)} /></span>
       </div>
-      <Button variant="primary" icon="play" onClick={() => startFlow(todayIds)}>{t('Start {0}', todayName)}</Button>
+      <Button variant="primary" icon="play" onClick={() => startFlow(todayIds, tag)}>{t('Start {0}', todayName)}</Button>
     </div>}
     {others.length > 0 && <><h4 className="sec">{t('Other routines')}</h4>
-      <div className="list">{others.map(r => <div key={r.id} className="item" onClick={() => startFlow([r.id])}>
+      <div className="list">{others.map(r => <div key={r.id} className="item" onClick={() => startFlow([r.id], tag)}>
         <span className="lrow-i"><Icon name={glyphOf(r.emoji)} /></span>
         <div className="grow"><div className="tt">{r.name}</div><div className="ss">{exCount(r.ex.length)}</div></div>
         <span className="tag acc">{t('Start')}</span></div>)}</div></>}
     <div style={{ height: 14 }} />
-    <Button icon="shuffle" onClick={() => startFlow([])}>{t('Freestyle workout (pick as you go)')}</Button>
+    <Button icon="shuffle" onClick={() => startFlow([], null)}>{t('Freestyle workout (pick as you go)')}</Button>
     {!S.routines.length && <><div style={{ height: 10 }} /><Button variant="primary" onClick={() => nav('/plan')}>{t('Build a plan first')}</Button></>}
   </div>
 }

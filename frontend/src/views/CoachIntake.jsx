@@ -17,7 +17,8 @@ import { KNOWN_EQUIPMENT, splitKnownUnknown, mergeScan } from '../lib/coach-equi
 import { emptyCoach, coachAvailable, hasConsent, CONSENT_VERSION, CATEGORY_TEXT, appendChat } from '../lib/coach.js'
 import { requestPlan, disclosure } from '../lib/coach-api.js'
 import { maxOptionalFor } from '../lib/week-plan.js'
-import { GOALS, MAX_OBJECTIVES, normalizeObjectives, toggleObjective, moveObjective, goalIcon } from '../lib/coach-goals.js'
+import { GOALS, GOAL_KEYS, MAX_OBJECTIVES, normalizeObjectives, toggleObjective, moveObjective, goalIcon } from '../lib/coach-goals.js'
+import { getFitaiSummary } from '../lib/fitai.js'
 import { DEMO } from '../lib/demo.js'
 import { MOBILE } from '../lib/mobile.js'
 import Icon from '../components/Icon.jsx'
@@ -39,6 +40,16 @@ const QUICK_MIN = [30, 45, 60, 90]
 const toHHMM = min => String(Math.floor(min / 60)).padStart(2, '0') + ':' + String(min % 60).padStart(2, '0')
 const fromHHMM = v => { const [h, m] = String(v || '').split(':').map(Number); return Number.isFinite(h) && Number.isFinite(m) ? h * 60 + m : null }
 
+// FitAI's goal words are its own ('cut', 'bulk', ...); the intake offers GOALS keys.
+// Mapped here so a linked profile's goal preselects the closest choice.
+const FITAI_GOAL = {
+  cut: 'fatloss', fatloss: 'fatloss', lose: 'fatloss', fat: 'fatloss', shred: 'fatloss',
+  muscle: 'muscle', bulk: 'muscle', gain: 'muscle', hypertrophy: 'muscle',
+  strength: 'strength', strong: 'strength',
+  maintain: 'general', general: 'general', fitness: 'general', health: 'general',
+  endurance: 'endurance', cardio: 'endurance',
+}
+
 export default function CoachIntake() {
   const nav = useNavigate()
   const [params] = useSearchParams()
@@ -59,6 +70,39 @@ export default function CoachIntake() {
     ...(S.coach?.profile || {})
   }))
   const set = patch => setP(v => ({ ...v, ...patch }))
+  // Whether the FitAI link filled anything in. Shown on the seeded steps, so a suggestion
+  // is never mistaken for an answer.
+  const [prefilled, setPrefilled] = useState(false)
+
+  // FitAI autofill: a linked profile's goal and conditions seed the answers still at their
+  // defaults. Skipped for the editor (`?edit=1` leaves its own answers alone) and when
+  // unlinked. Applied through a functional update, so a choice made while the fetch is in
+  // flight wins — the fetch only fills what is still empty when it lands.
+  useEffect(() => {
+    if (editing) return
+    const id = S?.fitaiUserId
+    if (!id) return
+    let live = true
+    getFitaiSummary(id, 7).then(sum => {
+      if (!live || !sum || typeof sum !== 'object') return
+      const goalKey = FITAI_GOAL[String(sum.profile?.goal || '').toLowerCase().trim()]
+      const goal = goalKey && GOAL_KEYS.includes(goalKey) ? goalKey : null
+      const conds = (Array.isArray(sum.conditions) ? sum.conditions : [])
+        .map(c => (typeof c === 'string' ? c : c?.label))
+        .filter(v => typeof v === 'string' && v.trim())
+        .map(v => v.trim())
+      if (!goal && !conds.length) return
+      setP(v => {
+        const patch = {}
+        if (goal && normalizeObjectives(v).length === 0) { patch.objectives = [goal]; patch.goal = goal }
+        if (!v.limitations && conds.length) patch.limitations = conds.join(', ')
+        if (!Object.keys(patch).length) return v
+        setPrefilled(true)
+        return { ...v, ...patch }
+      })
+    }).catch(() => {})
+    return () => { live = false }
+  }, [])
 
   // A stored profile can hold a pair that no week can satisfy — a profile answered on a build
   // where the two dials were independent keeps "7 days, 4 optional" forever, and the plan request
@@ -171,6 +215,7 @@ export default function CoachIntake() {
           })}
         </div>
         {objectives.length >= MAX_OBJECTIVES && <div className="ob-hint">{t('That is as many as a plan can serve at once. Untick one to pick another.')}</div>}
+        {prefilled && <div className="ob-hint">{t('Prefilled from FitAI')}</div>}
       </>}
 
       {key === 'experience' && <>
@@ -238,6 +283,7 @@ export default function CoachIntake() {
           <TextArea rows={4} maxLength={600} value={p.limitations} onChange={e => set({ limitations: e.target.value })}
             placeholder={t('e.g. “dodgy left shoulder — no barbell overhead press”')} />
         </div>
+        {prefilled && <div className="ob-hint">{t('Prefilled from FitAI')}</div>}
         <div className="ob-note warn">{t('If something actually hurts, see a professional — the Coach will program conservatively but it cannot diagnose anything.')}</div>
       </>}
 
@@ -356,7 +402,11 @@ function fileToDataUrl(file) {
    reaches the outer handler reliably and neither control is reachable by keyboard. So the card is
    a div, the tappable part is the main button, and the arrows are its siblings. */
 function Choice({ on, icon, title, sub, onClick, aside }) {
-  return <div className={'ob-choice' + (on ? ' on' : '')}>
+  // The whole card toggles: a tap on the card's padding lands on the div rather than the
+  // inner button, and must choose all the same. Taps that start inside a button (the main
+  // one, the rank arrows) keep the button's own handler — without the guard they would fire
+  // both and toggle twice.
+  return <div className={'ob-choice' + (on ? ' on' : '')} onClick={e => { if (!e.target?.closest?.('button')) onClick?.() }}>
     <button className="ob-choice-main" aria-pressed={on} onClick={onClick}>
       <Icon name={icon} />
       <span className="ob-choice-t">{title}{sub && <span className="ob-choice-s">{sub}</span>}</span>

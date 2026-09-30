@@ -104,3 +104,28 @@ export function sessionInsights(S, workout) {
   }).filter(Boolean)
   return { now, then, prevDate: prev?.d || null, lifts }
 }
+
+/**
+ * One-line readiness over a FitAI week summary — shared by the Home fuel card and
+ * the Stats fatigue note so both flag the same weeks. Returns { state, lines }:
+ * `state` is 'fueled' (nothing to flag), 'fasted' (a long fast is running), 'low'
+ * (a deficit or protein gap worth a line) or 'unknown' (no logs); `lines` carries
+ * the acute fast flag only ({ kind: 'fasted', hours }) — callers word chronic gaps
+ * themselves through fuelLineText (lib/fitai.js), so the card can stay quiet about
+ * a number it already shows as an average while the note still names it.
+ */
+export function fuelReadiness(summary) {
+  const nut = summary?.nutrition || {}
+  if (!nut.daysLogged) return { state: 'unknown', lines: [] }
+  const lines = []
+  const fst = summary?.fasting?.active
+  const fastMin = Number.isFinite(fst?.elapsedMin) ? fst.elapsedMin : (fst ? 60 : 0)
+  if (fst && fastMin >= 60) {
+    lines.push({ kind: 'fasted', hours: Math.max(1, Math.floor(fastMin / 60)) })
+  }
+  const deficit = nut.deficitVsTarget
+  const short = nut.proteinVsTarget
+  const low = (Number.isFinite(deficit) && deficit > 0) || (Number.isFinite(short) && short > 0)
+  if (!lines.length && !low) return { state: 'fueled', lines }
+  return { state: lines.some(l => l.kind === 'fasted') ? 'fasted' : 'low', lines }
+}

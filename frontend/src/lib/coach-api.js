@@ -22,6 +22,10 @@ const IDLE_MS = 60000       // a Coach screen is open but nothing is running
 // is imported dynamically so none of it lands in a self-hosted bundle.
 let demoMod = null
 const demo = async () => (demoMod = demoMod || await import('./coach-demo.js'))
+// Warm the demo chunk at load, so the first request — and the status poll behind the chat —
+// never pay the dynamic import cost mid-interaction. Behind DEMO, so a self-hosted bundle
+// still never loads it.
+if (DEMO) demo().catch(() => {})
 const S = () => useStore.getState().S
 // Each request says which language the app is in: a profile that never picked one has no stored
 // `lang` worth trusting — it is worked out per device (#303, lib/default-lang.js) — and the

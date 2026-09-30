@@ -1,0 +1,97 @@
+# openGym — push-to-deploy for a single self-hosted server.
+#
+# On every push to `main` (or a manual "Run workflow" click):
+#   1. test  — frontend unit tests + production build on Node 22
+#              (same version as web/Dockerfile). Deploy waits for this.
+#   2. deploy — SSH into the server, fast-forward /opt/openGym to origin/main,
+#              rebuild + restart the stack, then prove it serves.
+#
+# One-time setup (details in docs/SELF_HOSTING_CICD.md):
+#   a) On the server: clone the repo to /opt/openGym once, create .env, `docker compose up -d`.
+#   b) On GitHub: repo Settings → Secrets and variables → Actions → New repository secret:
+#        SSH_HOST = 2.28.233.167
+#        SSH_USER = root
+#        SSH_KEY  = a private key whose public half is in /root/.ssh/authorized_keys
+#        SSH_PORT = 22            (only if your SSH port is not 22)
+#
+# Design notes:
+# - `git reset --hard origin/main` (not `git pull`) so a stray local edit on the
+#   server can never diverge the deploy or block it with a merge conflict.
+#   .env, data/ and media/ are gitignored, so they are untouched by the reset.
+# - `docker compose up -d --build` rebuilds from source on the server: no
+#   registry, no image publishing, matches docs/SELF_HOSTING.md §8.
+# - The health check runs on the server against localhost, so a broken container
+#   fails the job (and shows up red on the commit) instead of failing silently.
+
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# A second push while a deploy is still running waits instead of racing it —
+# two `docker compose up --build` runs at once is how you get a half-built stack.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: test (frontend)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      # --ignore-scripts: nothing here needs a postinstall, and @capacitor/assets
+      # pulls a ~10 MB libvips binary whose download has timed out releases before
+      # (same flag as test:frontend in .gitlab-ci.yml).
+      - run: npm ci --prefer-offline --ignore-scripts
+
+      - run: npx vitest run
+
+      # A broken import or bad JSX fails here long before any test covers it.
+      - run: npm run build
+
+      - run: node scripts/check-locales.mjs
+
+  deploy:
+    name: deploy to 2.28.233.167
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    needs: [test]
+    # Only deploy pushes to main, never PRs from forks (they cannot have the secrets anyway).
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    steps:
+      - uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_KEY }}
+          port: ${{ secrets.SSH_PORT || '22' }}
+          script: |
+            set -eu
+            cd /opt/openGym
+            git fetch origin main
+            git reset --hard origin/main
+            docker compose up -d --build
+            # Wait for the stack to answer through nginx (up to ~60 s).
+            for i in $(seq 1 30); do
+              curl -fsS http://localhost:8080/api/health >/dev/null 2>&1 && break
+              sleep 2
+            done
+            echo "--- /api/health"; curl -fsS http://localhost:8080/api/health | grep -q '"ok":true'
+            echo "--- app shell";  curl -fsS http://localhost:8080/ | grep -q '<div id="root">'
+            docker compose ps
+            docker image prune -f
+            echo "OK: deployed $(git rev-parse --short HEAD)"

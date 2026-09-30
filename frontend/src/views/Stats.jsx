@@ -23,6 +23,8 @@ import {
 import { Button, Segmented, SelectRow } from '../components/ui.jsx'
 import { tappable } from '../lib/use-sheet-keyboard.js'
 import { isWarmupRow } from '../lib/workout-model.js'
+import { getFitaiSummary, fuelLineText } from '../lib/fitai.js'
+import { fuelReadiness } from '../lib/coach-insights.js'
 
 // Which muscles the training in a window actually hit — and, the point of the card,
 // which ones it keeps missing. Shading is relative within the window (lib/muscles.js).
@@ -140,6 +142,27 @@ function MuscleBalance({ S }) {
   const top = worked.slice(0, 4)
   const max = worked.length ? load[worked[0]] : 0
   const sets = m => fmtNum(Math.round((load[m] || 0) * 10) / 10)
+  // FitAI fuel note for the Fatigue view: same readiness read as the Home fuel
+  // card, but worded from the week's numbers (deficit first, then protein, then
+  // the acute fast flag). Unlinked profiles never ask; fueled/unknown weeks stay quiet.
+  const fitaiUserId = S.fitaiUserId
+  const [fitSummary, setFitSummary] = useState(null)
+  useEffect(() => {
+    if (!fitaiUserId) return
+    let live = true
+    getFitaiSummary(fitaiUserId, 7).then(s => { if (live) setFitSummary(s) })
+    return () => { live = false }
+  }, [fitaiUserId])
+  const fuelNote = (() => {
+    if (!fitaiUserId || !fitSummary) return null
+    const ready = fuelReadiness(fitSummary)
+    if (ready.state !== 'low' && ready.state !== 'fasted') return null
+    const nut = fitSummary.nutrition || {}
+    if (nut.deficitVsTarget > 0) return fuelLineText({ kind: 'deficit', kcal: nut.deficitVsTarget })
+    if (nut.proteinVsTarget > 0) return fuelLineText({ kind: 'protein', grams: nut.proteinVsTarget })
+    if (ready.lines?.length) return fuelLineText(ready.lines[0])
+    return null
+  })()
 
   return <div className="card">
     <Segmented className="seg-range" value={view} onChange={setView}
@@ -179,6 +202,7 @@ function MuscleBalance({ S }) {
       <BodyMap className="tappable hm-fatigue" load={fatigue} thresholds={FATIGUE_LEVELS} body={S.body} selected={sel} onMuscle={toggleSel} />
       <FatigueLegend />
       <div className="muted small" style={{ marginTop: 10 }}>{t('Fatigue shows how recently each muscle was trained. High means rest.')}</div>
+      {fuelNote && <div className="muted small" style={{ marginTop: 8 }}>{t('Fuel: {0}', fuelNote)}</div>}
       {sel && <div className="mrow" style={{ borderTop: 'var(--hair) solid var(--sep)', marginTop: 4, paddingTop: 10 }}>
         <span className="nm"><b>{t(MUSCLE_NAME[sel])}</b></span>
         <span className="v">{fatigueLabel(fatigue[sel])}</span>
