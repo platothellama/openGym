@@ -303,6 +303,18 @@ function PlanCard({ p, S, update, toast, nav, refresh }) {
   const r = b.routines[Math.min(tab, b.routines.length - 1)]
   const weekDays = useMemo(() => new Set(Object.keys(b.week || {}).map(Number)), [b])
   const weekOpt = useMemo(() => new Set((b.weekOptional || []).map(Number)), [b])
+  // Routines that run only on optional days get an "optional" tag on their tab: they are
+  // skippable sessions, and nothing about the tab order says so on its own.
+  const optOnly = useMemo(() => {
+    const daysOf = {}
+    Object.entries(b.week || {}).forEach(([d, rid]) => { (daysOf[rid] = daysOf[rid] || []).push(Number(d)) })
+    const out = new Set()
+    ;(b.routines || []).forEach(r => {
+      const days = daysOf[r.id] || []
+      if (days.length && days.every(d => weekOpt.has(d))) out.add(r.id)
+    })
+    return out
+  }, [b, weekOpt])
 
   const accept = () => {
     try {
@@ -341,7 +353,7 @@ function PlanCard({ p, S, update, toast, nav, refresh }) {
       <PlanWeek req={weekDays.size} opt={weekOpt} ws={weekStartOf(S)} />
 
       {b.routines.length > 1 && <div className="pcard-tabs">
-        {b.routines.map((x, i) => <button key={x.id || i} className={'pcard-tab' + (i === tab ? ' on' : '')} onClick={() => setTab(i)}><Icon name={glyphOf(x.emoji)} />{x.name}</button>)}
+        {b.routines.map((x, i) => <button key={x.id || i} className={'pcard-tab' + (i === tab ? ' on' : '')} onClick={() => setTab(i)}><Icon name={glyphOf(x.emoji)} />{x.name}{optOnly.has(x.id) ? ' · ' + t('optional') : ''}</button>)}
       </div>}
 
       {r && <RoutineBlock r={r} unit={S.unit} speedUnit={speedUnitOf(S)} />}

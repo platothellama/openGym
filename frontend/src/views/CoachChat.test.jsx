@@ -245,6 +245,16 @@ describe('the Coach chat', () => {
     expect(container.querySelector('.pcard-freq-opt')).toBe(null)
   })
 
+  it('marks the tabs that run only on optional days', async () => {
+    // x2 lives on day 2 alone and day 2 is optional; x1 trains required days. The marker is
+    // what tells the reader the easy session may be skipped.
+    const tabs = () => [...container.querySelectorAll('.pcard-tab')].map(b => b.textContent)
+    await mount({ id: 'p1', kind: 'create', bundle: { ...bundle({ 1: 'x1', 3: 'x1', 2: 'x2' }), weekOptional: [2] } })
+    expect(tabs()).toEqual(['Full body A', 'Full body B · optional'])
+    await mount({ id: 'p1', kind: 'create', bundle: bundle({ 1: 'x1', 2: 'x2' }) })
+    expect(tabs()).toEqual(['Full body A', 'Full body B'])
+  })
+
   it('an old plan with no optional key at all still reads as a plain week', async () => {
     // A plan from before the field existed, and a re-opened log entry whose bundle predates it:
     // neither has anything to show, and neither should ask the reader to wonder what is missing.

@@ -236,14 +236,16 @@ describe('week schedule as a routine-id list', () => {
       expect(target.weekOptional).toEqual([2])
     })
 
-    it('a slot the incoming plan already schedules is dropped, not applied twice', () => {
-      // Day 1 is planned *and* listed as optional, and day 1 is also named in the empty required
-      // list. Both lists are normalised before they are written, so neither survives the conflict.
+    it('a slot the incoming plan schedules as optional stays optional, with its session', () => {
+      // Day 1 is planned *and* listed as optional: that is a skippable session, not a conflict.
+      // The merge writes the session into the week and keeps the day in the optional list, and
+      // the required/optional split stays a derivation rather than a second thing to store.
       const parsed = parsePlan(JSON.stringify(buildPlanBundle(
         { ...twoRoutines, week: { 1: ['a'] }, weekOptional: [1, 3], weekRequired: [1, 5] }, 'Plan')))
       const target = { routines: [], week: {}, customEx: [] }
       mergePlan(target, parsed, { schedule: true })
-      expect(target.weekOptional).toEqual([3])
+      expect(target.week[1]).toHaveLength(1)
+      expect(target.weekOptional).toEqual([1, 3])
       expect(target.weekRequired).toEqual([5])
     })
 

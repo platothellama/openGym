@@ -127,10 +127,24 @@ function buildPlan(S, intake) {
   ]
   const week = {}
   days.forEach((d, i) => { week[d] = routines[i % routines.length].id })
-  // The optional slots, named as empty weekday numbers and disjoint from `week` by construction —
-  // the same contract a real plan answers under, so the card and the merge treat the demo exactly
-  // as they treat the Coach's. Omitted rather than `[]` when there are none, as everywhere else.
+  // The optional slots, each with the easy session on it and named in `weekOptional` —
+  // the same contract a real plan answers under, so the card and the merge treat the demo
+  // exactly as they treat the Coach's. Omitted rather than `[]` when there are none, as
+  // everywhere else. A library too small to fill even an easy day leaves the slots named
+  // but unscheduled rather than answering with an empty routine the apply step would refuse.
+  const easyEx = [
+    mk(pick('upper legs', eq)?.id, null, 2, 10, t('Light legs at an easy pace — movement, not training.')),
+    mk(pick('back', eq)?.id, null, 2, 12, t('Easy pulling to balance the week out.'))
+  ].filter(e => e.id)
   const weekOptional = optional.length ? optional : undefined
+  if (easyEx.length && weekOptional) {
+    routines.push({
+      id: 'dr-opt', name: t('Easy day'), emoji: '🚶', prog: 'off',
+      why: t('An easy session for the optional days — show up or skip it, it never progresses.'),
+      ex: easyEx
+    })
+    weekOptional.forEach(d => { week[d] = 'dr-opt' })
+  }
   return {
     id: 'demo-plan', kind: 'create', createdAt: Date.now(), expiresAt: Date.now() + 864e5, iteration: 1,
     planHash: planHash(S),

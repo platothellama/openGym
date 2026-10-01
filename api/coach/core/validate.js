@@ -182,15 +182,15 @@ export function validatePlan(data, ctx = {}) {
     week[day] = rid;
   });
 
-  // The optional days: bare weekday numbers, no routine. Normalised the same way `week` is, so
-  // the client receives a sorted list of numbers rather than whatever shape the model wrote.
+  // The optional days: weekday numbers, each with its light session scheduled in `week`
+  // above. Normalised the same way `week` is, so the client receives a sorted list of
+  // numbers rather than whatever shape the model wrote. A day in both lists is a skippable
+  // session, not a contradiction: required days are `week` minus this list, and the client
+  // derives the same split (frontend/src/lib/week-plan.js).
   const weekOptional = [];
   for (const d of Array.isArray(data.weekOptional) ? data.weekOptional : []) {
     const day = typeof d === 'string' && /^\d$/.test(d) ? +d : d;
     if (!isInt(day, 0, 6)) { errors.push(`weekOptional entry "${d}" is not a weekday number 0-6`); continue; }
-    // A day cannot be both. An optional day with a routine on it is a required day wearing a
-    // label, and the client's required/optional split is derived from exactly this distinction.
-    if (day in week) { errors.push(`weekday ${day} is in both week and weekOptional`); continue; }
     if (!weekOptional.includes(day)) weekOptional.push(day);
   }
   weekOptional.sort((a, b) => a - b);
@@ -210,10 +210,12 @@ export function validatePlan(data, ctx = {}) {
   // FR-17: honour the number of training days the user asked for.
   const want = ctx.daysPerWeek;
   // An absent week used to slip through: the plan then schedules nothing at all, which is not
-  // the number of days anyone asked for either. `week` holds the required days only — the
-  // optional ones are in `weekOptional` and are not sessions, so they are not counted here.
-  if (isInt(want, 1, 7) && Object.keys(week).length !== want) {
-    errors.push(`the week schedules ${Object.keys(week).length} days but ${want} were asked for`);
+  // the number of days anyone asked for either. Required days are `week` minus the optional
+  // ones — an optional session still trains, so it must not count toward the required number.
+  const optSet = new Set(weekOptional);
+  const requiredDays = Object.keys(week).map(Number).filter(d => !optSet.has(d));
+  if (isInt(want, 1, 7) && requiredDays.length !== want) {
+    errors.push(`the week schedules ${requiredDays.length} required days but ${want} were asked for`);
   }
 
   // And the optional days they asked for. `count` treats 0 as absent on the way in, so a null
@@ -221,6 +223,11 @@ export function validatePlan(data, ctx = {}) {
   const wantOptional = ctx.optionalDays;
   if (isInt(wantOptional, 1, 4) && weekOptional.length !== wantOptional) {
     errors.push(`weekOptional names ${weekOptional.length} days but ${wantOptional} were asked for`);
+  }
+  // Every optional day carries its light session in `week`: without one it is a rest day
+  // wearing a label, and the card would show a slot with nothing to do on it.
+  for (const day of weekOptional) {
+    if (!(day in week)) errors.push(`optional day ${day} has no routine in week — every optional day needs its session`);
   }
 
   if (errors.length) return fail(errors);

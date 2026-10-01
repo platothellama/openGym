@@ -312,11 +312,11 @@ export function mergePlan(s, bundle, { schedule } = {}) {
       if (ids.length) s.week[d] = ids
     })
     // The optional slots move with the week, and only when the week did: with the switch off the
-    // person's own schedule stands, and so does whatever they had made optional. A slot that
-    // names a day the incoming plan already schedules is dropped rather than applied — that day
-    // is required now, and the two lists are disjoint by definition.
-    const taken = new Set(Object.keys(s.week).map(Number))
-    const optional = optionalDaysOf({ weekOptional: source.weekOptional }).filter(d => !taken.has(d))
+    // person's own schedule stands, and so does whatever they had made optional. The bundle's
+    // optional list applies as named — an optional day may carry its light session in `week`
+    // (that is what the Coach writes now), and it stays optional all the same: required days
+    // are read as the complement, everywhere.
+    const optional = optionalDaysOf({ weekOptional: source.weekOptional })
     if (optional.length) s.weekOptional = optional
     else delete s.weekOptional
     // …and the required slots that are still empty. Taken from the incoming plan's own shape,

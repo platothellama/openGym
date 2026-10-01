@@ -72,9 +72,10 @@ export const CREATE_SCHEMA = {
     summary: STR,
     basedOn: STR,
     week: { type: 'object' },
-    // Bare weekday numbers, no routine: an optional day is an open slot the person may train or
-    // skip, so the model names the day and leaves the work off it. Not in `required` — asking for
-    // a plan with no optional days must not make the model invent a key to satisfy the schema.
+    // Weekday numbers whose sessions may be skipped. Each one is also scheduled in `week`
+    // with its light routine — the list marks days skippable, it is not where the work lives.
+    // Not in `required` — asking for a plan with no optional days must not make the model
+    // invent a key to satisfy the schema.
     weekOptional: { type: 'array', items: { type: 'integer' } },
     // The caps are the validator's own (MAX_ROUTINES, MAX_EX_PER_ROUTINE), stated here as well
     // because "1-7 routines, each 3-12 exercises" in create.md is only a request. A small model

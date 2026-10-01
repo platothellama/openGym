@@ -96,7 +96,7 @@ test('a plan that ignores the requested number of training days is rejected', ()
     { daysPerWeek: 3 }
   );
   assert.equal(r.ok, false);
-  assert.ok(r.errors.some(e => e.includes('4 days') && e.includes('3')));
+  assert.ok(r.errors.some(e => e.includes('4 required days') && e.includes('3')));
 });
 
 /* ---------------- optional days ---------------- */
@@ -106,32 +106,41 @@ const optPlan = (week, weekOptional) => ({
   week, weekOptional
 });
 
-test('optional days are named separately and do not count as training days', () => {
-  // The whole point: 3 required sessions plus 2 open slots. Under the old rule this week would
-  // have been rejected as "5 days but 3 were asked for", which is why optional days are their
-  // own list and the required count is checked against `week` alone.
-  const r = validatePlan(optPlan({ 1: 'r1', 3: 'r1', 5: 'r1' }, [2, 4]), { daysPerWeek: 3, optionalDays: 2 });
+test('optional days carry their own sessions and do not count as required days', () => {
+  // The whole point: 3 required sessions plus 2 light optional ones. Required days are `week`
+  // minus `weekOptional`, so the optionals must not count toward the required number — and each
+  // one needs its session, or it is a rest day wearing a label.
+  const r = validatePlan(optPlan({ 1: 'r1', 2: 'r1', 3: 'r1', 4: 'r1', 5: 'r1' }, [2, 4]), { daysPerWeek: 3, optionalDays: 2 });
   assert.equal(r.ok, true);
   assert.deepEqual(r.bundle.weekOptional, [2, 4]);
-  assert.equal(r.bundle.week[2], undefined, 'an optional day holds no routine');
+  assert.equal(r.bundle.week[2], 'r1', 'an optional day holds its routine');
 });
 
 test('a plan that names the wrong number of optional days is rejected', () => {
-  const r = validatePlan(optPlan({ 1: 'r1', 3: 'r1', 5: 'r1' }, [2]), { daysPerWeek: 3, optionalDays: 2 });
+  const r = validatePlan(optPlan({ 1: 'r1', 2: 'r1', 3: 'r1', 5: 'r1' }, [2]), { daysPerWeek: 3, optionalDays: 2 });
   assert.equal(r.ok, false);
   assert.ok(r.errors.some(e => e.includes('weekOptional names 1') && e.includes('2')));
 });
 
-test('a day cannot be both required and optional', () => {
-  // Otherwise the client's split — required = week keys minus weekOptional — is ambiguous, and
-  // a required day's work would land on a day the person was told they could skip.
-  const r = validatePlan(optPlan({ 1: 'r1', 3: 'r1', 5: 'r1' }, [3]), { daysPerWeek: 3, optionalDays: 1 });
+test('a day can be required or optional, and the required count excludes the optional ones', () => {
+  // Overlap is the contract now, not corruption: day 3 trains but may be skipped, so 3 required
+  // days are asked for and 3 required days are scheduled.
+  const r = validatePlan(optPlan({ 1: 'r1', 3: 'r1', 5: 'r1' }, [3]), { daysPerWeek: 2, optionalDays: 1 });
+  assert.equal(r.ok, true);
+  const over = validatePlan(optPlan({ 1: 'r1', 3: 'r1', 5: 'r1' }, [3]), { daysPerWeek: 3, optionalDays: 1 });
+  assert.equal(over.ok, false, '3 scheduled but only 2 required');
+  assert.ok(over.errors.some(e => e.includes('2 required days') && e.includes('3')));
+});
+
+test('an optional day with nothing scheduled is rejected', () => {
+  const r = validatePlan(optPlan({ 1: 'r1', 3: 'r1', 5: 'r1' }, [2, 4]), { daysPerWeek: 3, optionalDays: 2 });
   assert.equal(r.ok, false);
-  assert.ok(r.errors.some(e => e.includes('both week and weekOptional')));
+  assert.ok(r.errors.some(e => e.includes('optional day 2') && e.includes('no routine')));
+  assert.ok(r.errors.some(e => e.includes('optional day 4') && e.includes('no routine')));
 });
 
 test('optional days are normalised the same way week keys are', () => {
-  const r = validatePlan(optPlan({ 1: 'r1' }, ['6', 2, '2', 0]), { daysPerWeek: 1 });
+  const r = validatePlan(optPlan({ 1: 'r1', 0: 'r1', 2: 'r1', 6: 'r1' }, ['6', 2, '2', 0]), { daysPerWeek: 1 });
   assert.equal(r.ok, true);
   assert.deepEqual(r.bundle.weekOptional, [0, 2, 6], 'de-duplicated, sorted, one-digit strings read as numbers');
 });
@@ -150,7 +159,7 @@ test('a plan asked for no optional days may still name some, and the ask is not 
   const none = validatePlan(optPlan({ 1: 'r1' }, []), { daysPerWeek: 1, optionalDays: null });
   assert.equal(none.ok, true);
   assert.deepEqual(none.bundle.weekOptional, []);
-  const some = validatePlan(optPlan({ 1: 'r1' }, [3, 5]), { daysPerWeek: 1, optionalDays: null });
+  const some = validatePlan(optPlan({ 1: 'r1', 3: 'r1', 5: 'r1' }, [3, 5]), { daysPerWeek: 1, optionalDays: null });
   assert.equal(some.ok, true);
   assert.deepEqual(some.bundle.weekOptional, [3, 5]);
 });
@@ -421,7 +430,7 @@ test('a plan with no week at all does not satisfy a requested day count', () => 
     { daysPerWeek: 4 }
   );
   assert.equal(r.ok, false);
-  assert.ok(r.errors.some(e => e.includes('0 days')));
+  assert.ok(r.errors.some(e => e.includes('0 required days')));
 });
 
 test('a starting weight is dropped when there is nothing logged to justify it', () => {

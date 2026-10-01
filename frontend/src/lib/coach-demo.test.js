@@ -134,15 +134,17 @@ describe('coach-demo — the starter plan', () => {
 
   it('builds the week from the frequency answers, not from a fixed Mon/Wed/Fri', () => {
     const p = think(() => demoPlan(state(), { daysPerWeek: 4, optionalDays: 1, equipment: [] }))
-    expect(Object.keys(p.bundle.week)).toHaveLength(4)
+    // Four required sessions plus the optional day's easy session on top of them.
+    expect(Object.keys(p.bundle.week)).toHaveLength(5)
     expect(p.bundle.weekOptional).toHaveLength(1)
-    // The two lists are disjoint, or the same day would be claimed twice.
-    expect(p.bundle.weekOptional[0] in p.bundle.week).toBe(false)
+    // The optional day is named AND scheduled: skippable, not empty.
+    expect(p.bundle.week[p.bundle.weekOptional[0]]).toBe('dr-opt')
   })
 
   it('names the optional slots, and omits the key when there are none', () => {
     const withOpt = think(() => demoPlan(state(), { daysPerWeek: 3, optionalDays: 2, equipment: [] }))
     expect(withOpt.bundle.weekOptional).toHaveLength(2)
+    for (const d of withOpt.bundle.weekOptional) expect(withOpt.bundle.week[d]).toBe('dr-opt')
     const without = think(() => demoPlan(state(), { daysPerWeek: 3, equipment: [] }))
     expect('weekOptional' in without.bundle).toBe(false)
   })

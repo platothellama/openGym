@@ -615,12 +615,15 @@ describe('created plans', () => {
     expect(s.weekOptional).toEqual([4])
   })
 
-  it('drops an optional day the plan also schedules, rather than letting it be both', () => {
+  it('keeps an optional day the plan also schedules, with its session', () => {
     const s = JSON.parse(JSON.stringify(state()))
-    // Day 1 is in `week` already, so calling it optional would claim the slot twice. The
-    // validator rejects that shape, and a hand-made bundle must not be able to smuggle it past.
-    applyCreatedPlan(s, { id: 'p1', kind: 'create', bundle: { ...bundle, weekOptional: [1, 5] } }, { schedule: true })
-    expect(s.weekOptional).toEqual([5])
+    // Day 1 trains in `week` and is named in `weekOptional`: a skippable session, which the
+    // validator accepts and the merge writes through — the day stays in both lists.
+    applyCreatedPlan(s, { id: 'p1', kind: 'create', bundle: { ...bundle, week: { ...bundle.week, 5: 'x1' }, weekOptional: [1, 5] } }, { schedule: true })
+    expect(s.weekOptional).toEqual([1, 5])
+    expect(s.week[1]).toHaveLength(1)
+    expect(s.week[5]).toHaveLength(1)
+    expect(optionalDaysOf(s)).toEqual([1, 5])
   })
 
   it('puts the optional days back on revert', () => {

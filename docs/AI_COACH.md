@@ -323,10 +323,11 @@ The weekday is still the identity underneath, and surfaces that show a *date* ra
 slot keep naming it — Home's strip and calendar, the "next session" line, `plan.day` in a
 share file. Those are places a calendar day genuinely is the answer.
 
-An **optional day** is a slot the Coach names and leaves open. It may hold a routine or hold
-none, and either is a correct plan: a skipped optional day is not a missed session, and the
-review prompt is told so explicitly. Optional days are capped at 4 (`MAX_OPTIONAL`), because
-past that they are not a bonus any more.
+An **optional day** is a session the Coach plans but the person may skip: each one carries
+its own light routine (easy cardio, recovery, or technique work, ~20–30 min), scheduled in
+`week` like any other day and marked in `weekOptional`. A skipped optional day is not a
+missed session, and the review prompt is told so explicitly. Optional days are capped at 4
+(`MAX_OPTIONAL`), because past that they are not a bonus any more.
 
 Three fields, and the rules that keep them honest:
 
