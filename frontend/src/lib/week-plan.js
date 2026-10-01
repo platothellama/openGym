@@ -136,6 +136,34 @@ export const slotsOf = S => {
     .map(day => ({ day, optional: !req.has(day) }))
 }
 
+/**
+ * `slotsOf` with the number each slot is called, as `{ day, optional, n }`.
+ *
+ * A slot is a session, not a weekday: the week is set by how many days there are, not by which
+ * ones, and `syncFrequency` re-lays them out whenever a count moves. So a row headed "Monday"
+ * states a day the app does not hold — nudge a stepper and Monday is a different session, or no
+ * session at all. Every surface that renders a week asks for its label here, so the Plan screen,
+ * the sheet that fills one slot, and the printout cannot disagree about what a day is called.
+ *
+ * The two kinds number within themselves, so "Day 3" is always one of the days meant to be
+ * trained and the optional days count from 1 on their own. Counting all slots together would let
+ * Day 2 be optional and Day 3 required, which reads as a mistake.
+ */
+export const numberedSlotsOf = S => {
+  let req = 0
+  let opt = 0
+  return slotsOf(S).map(({ day, optional }) => {
+    if (optional) return { day, optional, n: ++opt }
+    return { day, optional, n: ++req }
+  })
+}
+
+/** The number one slot is called within its own kind — what a row is titled. */
+export const slotNumber = (S, day) => {
+  const s = numberedSlotsOf(S).find(x => x.day === day)
+  return s ? s.n : 0
+}
+
 /** How many days a week this plan trains, planned or not. */
 export const requiredCount = S => requiredDaysOf(S).length
 export const optionalCount = S => optionalDaysOf(S).length

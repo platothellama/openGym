@@ -12,12 +12,12 @@ import { EXIDX, isBodyweightEq } from './exercises.js'
 import { cleanUrl } from './media-refs.js'
 import { modeOf, exLine, MAX_PLANNED_WARMUPS } from './history.js'
 import { deriveSessionName } from './session-merge.js'
-import { uid, todayISO, DAYN, weekOrder, weekStartOf, exCount } from './format.js'
+import { uid, todayISO, exCount } from './format.js'
 import { t, exerciseNameFor, exerciseNameClass, getLang, RTL_LANGS } from './i18n-core.js'
 import { convertWeight } from './units.js'
 import { fmtSpeed, speedUnitOf } from './speed.js'
 import { MUSCLES, inMuscleOrder } from './muscles.js'
-import { optionalDaysOf, emptyRequiredOf, requiredDaysOf } from './week-plan.js'
+import { optionalDaysOf, emptyRequiredOf, requiredDaysOf, numberedSlotsOf } from './week-plan.js'
 
 const PLAN_FMT = 1
 const WEEK_DAYS = [1, 2, 3, 4, 5, 6, 0]   // every getDay() index; only the reader's own
@@ -397,22 +397,32 @@ function routineHTML(r, unit, { bare = false, speedUnit } = {}) {
 function weekHTML(S) {
   // The printout is read by whoever exported it, so the week runs in their order.
   //
+  // A day is printed as the session it is, not as a weekday. The export is the plan as the app
+  // holds it, and the app holds a frequency: these slots come out of a spread table, so a sheet
+  // headed "Monday" would print a day the plan never promised and would go stale the moment a
+  // count moved. The reader takes this to the gym and counts sessions, so it is numbered.
+  //
   // An empty day is not automatically rest any more. A plan is a frequency, so a day can be
   // waiting for a routine (required, not planned), optional (they may or may not train it), or
   // genuinely a rest. Printing "Rest" for the first two would tell the reader to skip a day
   // they had said they were training — the sheet is exactly the place that has to be honest.
+  // The three stay distinct because the reader acts on them differently: a required empty slot is
+  // a hole to fill, an optional one is simply not scheduled and needs nothing, and only a day the
+  // plan never claimed is rest. An empty optional slot therefore prints nothing at all in the
+  // right-hand column — its row is already titled "Optional day N", and repeating it, or dressing
+  // it in "Not planned yet", would turn an optional day into an obligation on paper.
   const open = new Set(emptyRequiredOf(S))
-  const opt = new Set(optionalDaysOf(S))
-  const rows = weekOrder(weekStartOf(S)).map(d => {
-    const names = [].concat(S.week?.[d] || [])
+  const rows = numberedSlotsOf(S).map(({ day, optional, n }) => {
+    const names = [].concat(S.week?.[day] || [])
       .map(id => S.routines.find(x => x.id === id)?.name)
       .filter(Boolean)
     let val
     if (names.length) val = esc(deriveSessionName(names))
-    else if (opt.has(d)) val = `<span class="rest">${esc(t('Optional'))}</span>`
-    else if (open.has(d)) val = `<span class="rest">${esc(t('Not planned yet'))}</span>`
+    else if (optional) val = ''
+    else if (open.has(day)) val = `<span class="rest">${esc(t('Not planned yet'))}</span>`
     else val = `<span class="rest">${esc(t('Rest'))}</span>`
-    return `<div class="w-row"><div class="w-day">${esc(t(DAYN[d]))}</div><div class="w-r">${val}</div></div>`
+    const label = optional ? t('Optional day {0}', n) : t('Day {0}', n)
+    return `<div class="w-row"><div class="w-day">${esc(label)}</div><div class="w-r">${val}</div></div>`
   }).join('')
   return `<div class="week">${rows}</div>`
 }

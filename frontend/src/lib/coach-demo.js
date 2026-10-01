@@ -18,6 +18,8 @@ import { isWarmupRow } from './workout-model.js'
 import { best1RM } from './onerm.js'
 import { fmtNum } from './format.js'
 import { planHash } from './coach.js'
+import { ALL_DAYS, defaultDays } from './week-plan.js'
+import { weekStartOf } from './format.js'
 import { t } from './i18n.js'
 
 const DELAY = 2200      // long enough to see "the Coach is thinking…", short enough to forgive
@@ -80,7 +82,27 @@ function buildReview(S) {
 /** A small, honest starter plan for the demo's creation flow. */
 function buildPlan(S, intake) {
   const pick = (bp, eq) => EXDB.find(e => e.bp === bp && (!eq || e.eq === eq)) || EXDB.find(e => e.bp === bp)
-  const days = intake?.preferredDays?.length ? intake.preferredDays.slice(0, 3) : [1, 3, 5]
+  // The week is built from the two answers the intake actually collects now — how many days, and
+  // how many of those are optional — rather than from named weekdays, because there are none left
+  // in the profile. A demo that ignored them would show a fixed Mon/Wed/Fri and no optional slots
+  // to somebody who just said "four days, one of them optional", which is the model the rest of
+  // the app now runs on.
+  //
+  // `preferredDays` is read first and only for its *count*: a profile written before the frequency
+  // picker has that key and no `daysPerWeek`, and its days are the best evidence of how often this
+  // person actually trains.
+  const preferred = intake?.preferredDays?.length ? intake.preferredDays : null
+  const wantDays = Number(intake?.daysPerWeek) || preferred?.length || 3
+  const nDays = Math.min(ALL_DAYS.length, Math.max(1, Math.round(wantDays)))
+  // The spread, in the order the person's week starts on, as everywhere else in the app.
+  const days = preferred ? preferred.slice(0, nDays) : defaultDays(nDays, weekStartOf(S))
+  // Bounded by the room the required days leave, exactly as the intake screen and the Plan
+  // steppers bound it — a week cannot hold eleven days. The free days are the ones `days` did not
+  // take, not the ones past a count: `days` comes from the spread table or the profile's own list,
+  // and either can land anywhere in the week, so filtering on anything else can hand out a day the
+  // plan already schedules and leave the two lists claiming the same slot.
+  const wantOpt = Math.min(Number(intake?.optionalDays) || 0, ALL_DAYS.length - days.length)
+  const optional = ALL_DAYS.filter(d => !days.includes(d)).slice(0, Math.max(0, wantOpt))
   const eq = (intake?.equipment || [])[0] || null
   const mk = (id, name, sets, reps, why) => ({ id, sets, reps, mode: 'reps', why })
   const routines = [
@@ -105,15 +127,19 @@ function buildPlan(S, intake) {
   ]
   const week = {}
   days.forEach((d, i) => { week[d] = routines[i % routines.length].id })
+  // The optional slots, named as empty weekday numbers and disjoint from `week` by construction —
+  // the same contract a real plan answers under, so the card and the merge treat the demo exactly
+  // as they treat the Coach's. Omitted rather than `[]` when there are none, as everywhere else.
+  const weekOptional = optional.length ? optional : undefined
   return {
     id: 'demo-plan', kind: 'create', createdAt: Date.now(), expiresAt: Date.now() + 864e5, iteration: 1,
     planHash: planHash(S),
-    summary: t('A two-day rotation across three sessions a week, built around the equipment you listed. Compounds first, one pull for every press, and enough overlap between the days that nothing goes two weeks without being trained.'),
+    summary: t('A two-day rotation across {0} sessions a week, built around the equipment you listed. Compounds first, one pull for every press, and enough overlap between the days that nothing goes two weeks without being trained.', days.length),
     bundle: {
       opengym_plan: 1, name: t('Coach plan'),
-      summary: t('A two-day rotation across three sessions a week, built around the equipment you listed. Compounds first, one pull for every press, and enough overlap between the days that nothing goes two weeks without being trained.'),
+      summary: t('A two-day rotation across {0} sessions a week, built around the equipment you listed. Compounds first, one pull for every press, and enough overlap between the days that nothing goes two weeks without being trained.', days.length),
       basedOn: (S.workouts || []).length ? t('Based on the training already in this demo profile.') : t('No training history yet — starting conservatively.'),
-      week, routines, customEx: []
+      week, routines, customEx: [], ...(weekOptional ? { weekOptional } : {})
     }
   }
 }

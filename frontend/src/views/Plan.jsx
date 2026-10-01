@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
-import { DAYN, uid, exCount, routineCount } from '../lib/format.js'
+import { uid, exCount, routineCount } from '../lib/format.js'
 import { t } from '../lib/i18n.js'
 import { dayAssignSheet, dayAddRoutineSheet, starterPlanSheet, planToolsSheet, confirmSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
@@ -12,7 +12,7 @@ import { glyphOf, DEFAULT_GLYPH } from '../lib/glyphs.js'
 import { DEMO } from '../lib/demo.js'
 import { MOBILE } from '../lib/mobile.js'
 import { coachAvailable } from '../lib/coach.js'
-import { slotsOf, syncFrequency, requiredDaysOf, optionalDaysOf, maxOptionalFor } from '../lib/week-plan.js'
+import { numberedSlotsOf, syncFrequency, requiredDaysOf, optionalDaysOf, maxOptionalFor } from '../lib/week-plan.js'
 
 export default function Plan() {
   const nav = useNavigate()
@@ -47,7 +47,7 @@ export default function Plan() {
   // syncFrequency lays the days out (lib/week-plan.js). Existing assignments are carried across
   // rather than rebuilt, so nudging the count never silently moves a routine. Each stepper passes
   // the *other* count through unchanged — they are two dials on one week, not two.
-  const slots = slotsOf(S)
+  const slots = numberedSlotsOf(S)
   // Required days that have something on them — the "3 planned" under the dial, as opposed to
   // the 3 the dial is set to. The two differ whenever a slot is still empty, which is the state
   // that most needs saying out loud.
@@ -113,9 +113,14 @@ export default function Plan() {
       <h4 className="sec" style={{ marginTop: 22 }}>{t('Week schedule')}</h4>
       {!slots.length && <div className="empty">{t('No days yet.')}<br />{t('Set how often you train above, or load a plan.')}</div>}
       <div className="list" style={{ display: 'flex', flexDirection: 'column' }}>
-        {slots.map(({ day, optional }) => {
+        {slots.map(({ day, optional, n }) => {
           const dayRoutines = [].concat(S.week[day] || []).map(id => S.routines.find(x => x.id === id)).filter(Boolean)
-          const dayTitle = <>{t(DAYN[day])}{optional && <span className="tag" style={{ marginLeft: 8 }}>{t('Optional')}</span>}</>
+          // The row is a session, so it is titled as one. A weekday here said "Monday" for a slot
+          // the frequency picked out of a spread table, and it stayed on screen saying "Monday"
+          // after a stepper moved it — the one number the person set is the count, so the count is
+          // what the week is listed as. Optional days number within themselves, so the required
+          // sessions below stay Day 1..Day n whatever the optional dial is set to.
+          const dayTitle = <>{optional ? t('Optional day {0}', n) : t('Day {0}', n)}</>
           // An empty day stays one tappable row → pick its routine. It is an empty *slot*, not a
           // rest day: the frequency above is what says this day is meant to be trained.
           if (!dayRoutines.length) return <div key={day} className="item" {...tappable(() => dayAssignSheet(day))}>

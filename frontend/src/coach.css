@@ -164,9 +164,13 @@
 .pcard-ex-n{font-size:16px;font-weight:500;letter-spacing:-.01em;text-transform:capitalize}
 .pcard-ex-l{font-size:14px;color:var(--label-2);white-space:nowrap;font-variant-numeric:tabular-nums}
 .pcard-ex-w{font-size:13px;color:var(--label-2);line-height:1.42;margin-top:3px}
-.pcard-week{display:flex;gap:5px;padding:10px 18px 4px}
-.pcard-wd{flex:1;text-align:center;font-size:11px;font-weight:600;padding:7px 0;border-radius:var(--r-sm);background:var(--surface-2);color:var(--label-3)}
-.pcard-wd.on{background:var(--acc-soft);color:var(--acc)}
+/* The plan's frequency, as two stacked facts rather than a lit Monday-to-Sunday strip. Wraps
+   rather than scrolls: the optional days are the line a person is most likely to want to read
+   twice, and a one-line row that runs off the card is the one that needs reading twice. */
+.pcard-week{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px;padding:10px 18px 4px}
+.pcard-freq{font-size:13.5px;font-weight:600;color:var(--label)}
+.pcard-freq-opt{display:flex;flex-wrap:wrap;align-items:baseline;gap:4px 8px;font-size:13.5px;font-weight:600;color:var(--acc)}
+.pcard-freq-opt-days{font-size:12.5px;font-weight:400;color:var(--label-2)}
 .pcard-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 18px;border-top:var(--hair) solid var(--sep)}
 .pcard-row .lrow-t{font-size:15px}
 .pcard-row .lrow-s{font-size:12px}

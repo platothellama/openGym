@@ -72,13 +72,16 @@ describe('starter plan chooser', () => {
     expect(useUI.getState().toastMsg).toBe('Upper / Lower loaded')
   })
 
-  it('asks first when a weekday the plan wants is already taken', () => {
+  it('asks first when a session the plan wants is already taken', () => {
     useStore.setState(s => ({ S: { ...s.S, week: { 3: ['mine'] } } }))
     choose('Full Body')
 
     const confirm = renderTop()
     expect(confirm.querySelector('h3').textContent).toBe('Load Full Body?')
-    expect(confirm.textContent).toContain('Monday, Wednesday and Friday')
+    // How many sessions it fills, not which weekdays: the week is a frequency, and the dialog that
+    // says what is about to be overwritten should not be the one place still naming days.
+    expect(confirm.textContent).toContain('It will fill 3 sessions a week.')
+    expect(confirm.textContent).not.toMatch(/Monday|Tuesday|Wednesday/)
     expect(S().week[3]).toEqual(['mine'])                  // nothing applied yet
     expect(S().routines).toHaveLength(1)
 

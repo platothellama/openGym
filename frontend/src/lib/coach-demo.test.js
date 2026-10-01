@@ -125,9 +125,43 @@ describe('coach-demo — the job machine', () => {
 
 describe('coach-demo — the starter plan', () => {
   it('schedules the preferred days round-robin across the two routines', () => {
+    // A profile written before the frequency picker lists its days and has no `daysPerWeek`, so
+    // the list is the only evidence of how often this person trains - and all four of them count.
     const p = think(() => demoPlan(state(), { preferredDays: [2, 4, 6, 0], equipment: [] }))
-    expect(Object.keys(p.bundle.week).map(Number).sort((a, b) => a - b)).toEqual([2, 4, 6])   // sliced to 3
-    expect(p.bundle.week).toEqual({ 2: 'dr1', 4: 'dr2', 6: 'dr1' })
+    expect(Object.keys(p.bundle.week).map(Number).sort((a, b) => a - b)).toEqual([0, 2, 4, 6])
+    expect(p.bundle.week).toEqual({ 0: 'dr2', 2: 'dr1', 4: 'dr2', 6: 'dr1' })
+  })
+
+  it('builds the week from the frequency answers, not from a fixed Mon/Wed/Fri', () => {
+    const p = think(() => demoPlan(state(), { daysPerWeek: 4, optionalDays: 1, equipment: [] }))
+    expect(Object.keys(p.bundle.week)).toHaveLength(4)
+    expect(p.bundle.weekOptional).toHaveLength(1)
+    // The two lists are disjoint, or the same day would be claimed twice.
+    expect(p.bundle.weekOptional[0] in p.bundle.week).toBe(false)
+  })
+
+  it('names the optional slots, and omits the key when there are none', () => {
+    const withOpt = think(() => demoPlan(state(), { daysPerWeek: 3, optionalDays: 2, equipment: [] }))
+    expect(withOpt.bundle.weekOptional).toHaveLength(2)
+    const without = think(() => demoPlan(state(), { daysPerWeek: 3, equipment: [] }))
+    expect('weekOptional' in without.bundle).toBe(false)
+  })
+
+  it('cannot ask for a week with more days in it than there are days', () => {
+    // Seven required leaves no room, and the optional answer is bounded by what is left - the same
+    // bound the intake screen and the Plan steppers apply, so the demo cannot show a week the app
+    // itself would refuse to store.
+    const p = think(() => demoPlan(state(), { daysPerWeek: 7, optionalDays: 4, equipment: [] }))
+    expect(Object.keys(p.bundle.week)).toHaveLength(7)
+    expect('weekOptional' in p.bundle).toBe(false)
+  })
+
+  it('lays the spread out from the day the person\'s week starts on', () => {
+    // Same week, same three days, different first day - the demo follows Settings like the Plan does.
+    const mon = think(() => demoPlan(state(), { daysPerWeek: 3, equipment: [] }))
+    const sun = think(() => demoPlan(state({ weekStart: 0 }), { daysPerWeek: 3, equipment: [] }))
+    expect(Object.keys(mon.bundle.week).map(Number).sort((a, b) => a - b)).toEqual([1, 3, 5])
+    expect(Object.keys(sun.bundle.week).map(Number).sort((a, b) => a - b)).toEqual([0, 2, 4])
   })
 
   it('falls back to Mon/Wed/Fri when the intake named no days', () => {

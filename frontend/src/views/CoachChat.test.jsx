@@ -212,14 +212,45 @@ describe('the Coach chat', () => {
     expect(mocks.S.coach.chat.at(-1).ref).toBe(mocks.S.coach.log.at(-1).id)
   })
 
-  it('lays the plan’s week out from the day the week is set to start on', async () => {
-    const days = () => [...container.querySelectorAll('.pcard-wd')].map(d => d.textContent)
+  // The card says how often the plan trains, not which weekday each session fell on. A
+  // Monday-to-Sunday strip asked the reader to count lit cells to learn a number the plan already
+  // knew, and it had no way to show an optional day at all - so the optional slots a plan carries
+  // were invisible on the card that introduces them.
+  it('says how often the plan trains, rather than laying the week out by weekday', async () => {
+    const freq = () => container.querySelector('.pcard-freq').textContent
     await mount({ id: 'p1', kind: 'create', bundle: bundle({ 0: 'x1', 1: 'x2' }) })
-    expect(days()).toEqual(['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'])
+    expect(freq()).toBe('2 days a week')
+    expect(container.querySelectorAll('.pcard-wd')).toHaveLength(0)
+    await mount({ id: 'p1', kind: 'create', bundle: bundle({ 0: 'x1' }) })
+    expect(freq()).toBe('1 day a week')
+  })
+
+  it('names the optional days, in the order the week is set to start on', async () => {
+    // Only the count is something the person chose; the days themselves are the plan's, and they
+    // are the one part worth reading twice - it is what the calendar will be missing work for.
+    const opt = () => container.querySelector('.pcard-freq-opt-days')?.textContent
+    // Day 5 is a Friday and day 0 a Sunday, so the two orders below are the two answers to
+    // "which comes first" and neither is the numeric one.
+    const withOpt = { week: { 1: 'x1', 2: 'x2' }, weekOptional: [5, 0] }
+    await mount({ id: 'p1', kind: 'create', bundle: { ...bundle(), ...withOpt } })
+    expect(container.querySelector('.pcard-freq-opt').textContent).toContain('2 optional')
+    expect(opt()).toBe('Fr, Su')
     const sunday = state(); sunday.weekStart = 0
-    await mount({ id: 'p1', kind: 'create', bundle: bundle({ 0: 'x1', 1: 'x2' }) }, null, { S: sunday })
-    expect(days()).toEqual(['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'])
-    expect([...container.querySelectorAll('.pcard-wd.on')].map(d => d.textContent)).toEqual(['Su', 'Mo'])
+    await mount({ id: 'p1', kind: 'create', bundle: { ...bundle(), ...withOpt } }, null, { S: sunday })
+    expect(opt()).toBe('Su, Fr')
+  })
+
+  it('says nothing about optional days when the plan has none', async () => {
+    await mount({ id: 'p1', kind: 'create', bundle: bundle({ 0: 'x1', 1: 'x2' }) })
+    expect(container.querySelector('.pcard-freq-opt')).toBe(null)
+  })
+
+  it('an old plan with no optional key at all still reads as a plain week', async () => {
+    // A plan from before the field existed, and a re-opened log entry whose bundle predates it:
+    // neither has anything to show, and neither should ask the reader to wonder what is missing.
+    await mount({ id: 'p1', kind: 'create', bundle: bundle(everyDay) })
+    expect(container.querySelector('.pcard-freq').textContent).toBe('7 days a week')
+    expect(container.querySelector('.pcard-freq-opt')).toBe(null)
   })
 
   it('offers the quick actions only when nothing is running', async () => {

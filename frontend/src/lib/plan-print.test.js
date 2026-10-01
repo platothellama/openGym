@@ -60,36 +60,42 @@ describe('planPrintHTML week schedule when days are still empty', () => {
   const S2 = {
     unit: 'kg',
     week: { 1: ['push'], 3: ['pull'] },
-    // Four required days, one of which (Saturday) has nothing on it yet; Tuesday optional.
-    weekOptional: [2],
-    weekRequired: [6],
+  // Four required days, one of which (Saturday) has nothing on it yet; Tuesday optional.
+  weekOptional: [2],
+  weekRequired: [6],
     routines: S.routines,
   }
-  // The day name and the state of that day, per row.
+  // The slot's label and the state of that slot, per row.
   const rows = html => [...html.matchAll(/<div class="w-day">([^<]+)<\/div><div class="w-r">([\s\S]*?)<\/div>/g)]
     .map(m => [m[1], m[2].replace(/<[^>]+>/g, '').trim()])
 
+  // Monday, Tuesday, Wednesday, Saturday, in week order: the required sessions number 1..3 and
+  // the optional one numbers within itself, so a row is titled by what it is rather than by a day
+  // the spread table happened to land on.
   it('names a planned day, an unplaced required day, an optional day and a rest day differently', () => {
     const r = Object.fromEntries(rows(planPrintHTML(S2, 'Ana')))
-    expect(r.Tuesday).toBe('Optional')          // optional, and nothing on it
-    expect(r.Saturday).toBe('Not planned yet')   // required, still an empty slot
-    expect(r.Monday).toBe('Push day')
-    expect(r.Sunday).toBe('Rest')               // neither
+    expect(r['Day 1']).toBe('Push day')       // Monday, planned
+    expect(r['Day 2']).toBe('Pull day')       // Wednesday, planned
+    expect(r['Day 3']).toBe('Not planned yet')// Saturday, required, still an empty slot
+    // The optional slot carries nothing to say in the right-hand column: its row already says
+    // "Optional day", and "Not planned yet" there would read as a session still owed.
+    expect(r['Optional day 1']).toBe('')
+    expect(Object.keys(r)).not.toContain('Rest')
   })
 
   it('prints an optional day as its routine once one is on it, not as optional', () => {
     const filled = { ...S2, week: { ...S2.week, 2: ['push'] } }
     const r = Object.fromEntries(rows(planPrintHTML(filled, 'Ana')))
-    expect(r.Tuesday).toBe('Push day')
+    expect(r['Optional day 1']).toBe('Push day')
     // And the empty required slot is still waiting, not rest.
-    expect(r.Saturday).toBe('Not planned yet')
+    expect(r['Day 3']).toBe('Not planned yet')
   })
 
   it('leaves a fully planned week with nothing to say but the routines', () => {
-    const planned = { ...S2, week: { ...S2.week, 6: ['pull'] } }
+    const planned = { ...S2, week: { ...S2.week, 6: ['pull'], 2: ['push'] } }
     const body = text(planPrintHTML(planned, 'Ana'))
     expect(body).not.toContain('Not planned yet')
-    expect(body).toContain('Rest')               // the days that are genuinely free
+    expect(body).not.toContain('Rest')        // the days that are genuinely free are not printed
   })
 })
 

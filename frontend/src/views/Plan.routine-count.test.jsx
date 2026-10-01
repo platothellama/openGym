@@ -54,7 +54,9 @@ describe('Plan — the day header counts its routines', () => {
   it('uses the singular for one routine and the plural for more', () => {
     mocks.S.week = { 1: ['r1'], 2: ['r1', 'r2'] }
     mount()
-    expect(countOn('Monday')).toBe('1 routine')
-    expect(countOn('Tuesday')).toBe('2 routines')
+    // Rows are titled as sessions (Monday and Tuesday are Day 1 and Day 2), so the count is read
+    // off the row rather than off a weekday that is no longer shown.
+    expect(countOn('Day 1')).toBe('1 routine')
+    expect(countOn('Day 2')).toBe('2 routines')
   })
 })

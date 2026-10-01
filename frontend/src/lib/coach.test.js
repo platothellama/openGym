@@ -3,7 +3,7 @@ import {
   canonicalPlan, planHash, hashPlan, markStale, applicable, currentValue, ROUTINE_NAME_SEEN,
   pushSnapshot, revertLast, canRevert, appendLog, applyChangeSet, applyCreatedPlan,
   recordDismissal, validateProposal, coachAvailable, hasConsent,
-  recordDebrief, logEntry, lightBundle, changeValues,
+  recordDebrief, logEntry, lightBundle, changeValues, changeTitle,
   CHANGE_TYPES, SNAPSHOT_MAX, LOG_MAX, CONSENT_VERSION, profileLines
 } from './coach.js'
 import { registerCustom } from './exercises.js'
@@ -251,6 +251,16 @@ describe('staleness', () => {
     expect(markStale(wk(1, 'r1'), state({ week: { 1: ['r1'] } })).changes[0].status).toBe('proposed')
     // the day gained a routine since → stale
     expect(markStale(wk(1, ['r1', 'r2']), state({ week: { 1: ['r1', 'r2', 'r3'] } })).changes[0].status).toBe('stale')
+  })
+
+  // A review that moves a session names the slot the Plan screen names it, not a weekday: the plan
+  // is a frequency, and "Monday: what's planned" points at a day the app does not hold.
+  it('titles a week change with the slot number the Plan screen uses', () => {
+    const S = state({ week: { 1: ['r1'], 3: ['r2'] }, weekRequired: [1, 3], weekOptional: [5] })
+    expect(changeTitle(change({ type: 'week', target: { weekday: 3 } }), S)).toBe('Day 2: what’s planned')
+    expect(changeTitle(change({ type: 'week', target: { weekday: 5 } }), S)).toBe('Optional day 1: what’s planned')
+    // A day the plan no longer has is not "Day 0", so it falls back to the weekday.
+    expect(changeTitle(change({ type: 'week', target: { weekday: 6 } }), S)).toBe('Saturday: what’s planned')
   })
 
   it('a rename of a routine whose name is longer than the Coach reads is not shown as stale', async () => {
@@ -585,6 +595,40 @@ describe('created plans', () => {
     ],
     customEx: []
   }
+
+  // The optional days are the whole point of the frequency model, and they only exist in the
+  // answer - nothing else in state holds them, so a plan that drops them here loses them for good.
+  it('brings the optional days in with the week when the schedule is taken', () => {
+    const s = JSON.parse(JSON.stringify(state()))
+    applyCreatedPlan(s, { id: 'p1', kind: 'create', bundle: { ...bundle, weekOptional: [5, 6] } }, { schedule: true })
+    expect(s.weekOptional).toEqual([5, 6])
+    expect(optionalDaysOf(s)).toEqual([5, 6])
+    // They are slots, not sessions: a created plan fills every required day and leaves these
+    // empty, which is why nothing appears in `week` for them.
+    expect(s.week[5]).toBeUndefined()
+    expect(s.weekRequired).toBeUndefined()
+  })
+
+  it('leaves the person\'s own optional days alone when the schedule is not taken', () => {
+    const s = JSON.parse(JSON.stringify(state({ weekOptional: [4] })))
+    applyCreatedPlan(s, { id: 'p1', kind: 'create', bundle: { ...bundle, weekOptional: [5, 6] } }, { schedule: false })
+    expect(s.weekOptional).toEqual([4])
+  })
+
+  it('drops an optional day the plan also schedules, rather than letting it be both', () => {
+    const s = JSON.parse(JSON.stringify(state()))
+    // Day 1 is in `week` already, so calling it optional would claim the slot twice. The
+    // validator rejects that shape, and a hand-made bundle must not be able to smuggle it past.
+    applyCreatedPlan(s, { id: 'p1', kind: 'create', bundle: { ...bundle, weekOptional: [1, 5] } }, { schedule: true })
+    expect(s.weekOptional).toEqual([5])
+  })
+
+  it('puts the optional days back on revert', () => {
+    const s = JSON.parse(JSON.stringify(state()))
+    applyCreatedPlan(s, { id: 'p1', kind: 'create', bundle: { ...bundle, weekOptional: [5, 6] } }, { schedule: true })
+    expect(revertLast(s)).toBe(true)
+    expect(s.weekOptional).toEqual([])
+  })
 
   // A link is never the Coach's to write, and a file ref never travels in a plan: validatePlan
   // drops both from the model's answer, and applying the plan drops them again, since mergePlan

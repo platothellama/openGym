@@ -17,7 +17,7 @@ import { useNavigate } from 'react-router-dom'
 import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
-import { fmtDate, fmtNum, DAYS, weekOrder, weekStartOf } from '../lib/format.js'
+import { fmtDate, fmtNum, DAYS, weekDayOffset, weekStartOf } from '../lib/format.js'
 import { exLine } from '../lib/history.js'
 import { speedUnitOf } from '../lib/speed.js'
 import { DEMO } from '../lib/demo.js'
@@ -302,6 +302,7 @@ function PlanCard({ p, S, update, toast, nav, refresh }) {
   const [schedule, setSchedule] = useState(true)
   const r = b.routines[Math.min(tab, b.routines.length - 1)]
   const weekDays = useMemo(() => new Set(Object.keys(b.week || {}).map(Number)), [b])
+  const weekOpt = useMemo(() => new Set((b.weekOptional || []).map(Number)), [b])
 
   const accept = () => {
     try {
@@ -337,7 +338,7 @@ function PlanCard({ p, S, update, toast, nav, refresh }) {
         {!!b.basedOn && <p className="pcard-sum" style={{ fontSize: 13 }}>{b.basedOn}</p>}
       </div>
 
-      <WeekStrip days={weekDays} ws={weekStartOf(S)} />
+      <PlanWeek req={weekDays.size} opt={weekOpt} ws={weekStartOf(S)} />
 
       {b.routines.length > 1 && <div className="pcard-tabs">
         {b.routines.map((x, i) => <button key={x.id || i} className={'pcard-tab' + (i === tab ? ' on' : '')} onClick={() => setTab(i)}><Icon name={glyphOf(x.emoji)} />{x.name}</button>)}
@@ -359,9 +360,21 @@ function PlanCard({ p, S, update, toast, nav, refresh }) {
   </div>
 }
 
-// In the order the week is set to start on (Settings), like the Plan's own week.
-const WeekStrip = ({ days, ws }) => <div className="pcard-week">
-  {weekOrder(ws).map(d => <div key={d} className={'pcard-wd' + (days.has(d) ? ' on' : '')}>{t(DAYS[d])}</div>)}
+/* How often this plan trains, as the two answers the person gave rather than as a Monday-to-Sunday
+ * strip. A strip here said "Monday, Wednesday, Friday" and left the reader to count the lit cells
+ * and to guess which kind of day each one was; it also had nowhere to put an optional day, so the
+ * optional slots the plan carries were invisible on the card that introduces it.
+ *
+ * The optional days are named even though only the count is chosen, because they are the only ones
+ * a person has to remember: they are what their calendar will be missing something for, and
+ * "Wednesday and Saturday if you can" is a thing you can act on where "2 optional" is not. They
+ * are listed in the order the week starts on, like everything else that shows a weekday. */
+const PlanWeek = ({ req, opt, ws }) => <div className="pcard-week">
+  <span className="pcard-freq">{req === 1 ? t('1 day a week') : t('{0} days a week', req)}</span>
+  {opt.size > 0 && <span className="pcard-freq-opt">
+    {t('{0} optional', opt.size)}
+    <span className="pcard-freq-opt-days">{[...opt].sort((a, b) => weekDayOffset(a, ws) - weekDayOffset(b, ws)).map(d => t(DAYS[d])).join(', ')}</span>
+  </span>}
 </div>
 
 const RoutineBlock = ({ r, unit, speedUnit }) => <div className="pcard-rt">
@@ -619,6 +632,9 @@ function ProposalDetail({ entry, S }) {
   const b = entry.bundle
   const r = b?.routines?.[Math.min(tab, (b?.routines?.length || 1) - 1)]
   const weekDays = useMemo(() => new Set(Object.keys(b?.week || {}).map(Number)), [b])
+  // From the log's own light bundle, which carries the optional slots for the same reason the live
+  // card does: a re-opened plan that hid them would read as a smaller week than the one imported.
+  const weekOpt = useMemo(() => new Set((b?.weekOptional || []).map(Number)), [b])
   return <div className="pdetail">
     <div className="pcard-hd" style={{ paddingInline: 0 }}>
       <div className="pcard-eyebrow">{kind === 'create' ? t('Plan') : kind === 'debrief' ? t('Workout debrief') : t('Suggestions')} · {fmtDate(new Date(entry.at).toISOString().slice(0, 10))}</div>
@@ -638,7 +654,7 @@ function ProposalDetail({ entry, S }) {
     </>}
 
     {kind === 'create' && b && <>
-      <WeekStrip days={weekDays} ws={weekStartOf(S)} />
+      <PlanWeek req={weekDays.size} opt={weekOpt} ws={weekStartOf(S)} />
       {b.routines.length > 1 && <div className="pcard-tabs" style={{ paddingInline: 0 }}>
         {b.routines.map((x, i) => <button key={x.id || i} className={'pcard-tab' + (i === tab ? ' on' : '')} onClick={() => setTab(i)}><Icon name={glyphOf(x.emoji)} />{x.name}</button>)}
       </div>}

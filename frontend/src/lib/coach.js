@@ -17,7 +17,7 @@ import { modeOf, isBw, isPerSide, cleanupSg } from './history.js'
 import { uid, todayISO, DAYN } from './format.js'
 import { mergePlan } from './plan-share.js'
 import { deleteRoutine } from './routines.js'
-import { optionalDaysOf, emptyRequiredOf } from './week-plan.js'
+import { optionalDaysOf, emptyRequiredOf, slotNumber } from './week-plan.js'
 import { normalizeObjectives, goalLabel } from './coach-goals.js'
 import { POLICIES } from './progression.js'
 import { t } from './i18n.js'
@@ -664,6 +664,19 @@ export const exName = id => EXIDX[id]?.n || t('Unknown exercise')
 const cap = s => String(s || '').replace(/(^|\s)(\p{L})/gu, (m, sp, ch) => sp + ch.toUpperCase())
 export const exTitle = id => cap(exName(id))
 
+/**
+ * What one day of the plan is called, for the surfaces that show a change without showing the row
+ * it belongs to. The same title the Plan screen gives the slot (`numberedSlotsOf`), falling back to
+ * the weekday when the day is not in the plan at all — a change can name a day the person has since
+ * dropped, and an unnumbered slot is better described by its weekday than by "Day 0".
+ */
+const dayName = (S, weekday) => {
+  const st = S || {}
+  const n = slotNumber(st, weekday)
+  if (!n) return t(DAYN[weekday])
+  return optionalDaysOf(st).includes(weekday) ? t('Optional day {0}', n) : t('Day {0}', n)
+}
+
 /** Human label for a change, used on the review screen and in the log. */
 export function changeTitle(c, S) {
   const ex = c.target?.exId ? exTitle(c.target.exId) : null
@@ -685,7 +698,13 @@ export function changeTitle(c, S) {
     case 'add-routine': return t('Add routine “{0}”', c.after?.name)
     case 'remove-routine': return t('Remove a routine')
     case 'rename-routine': return t('Rename routine to “{0}”', c.after)
-    case 'week': return Number.isInteger(c.target?.weekday) ? t('{0}: what’s planned', t(DAYN[c.target.weekday])) : t('Change what’s planned on one day')
+    // A day is titled the way the Plan screen titles it, so a review that moves a session does not
+    // point at "Monday" on a screen that no longer has a Monday to point at. The change still
+    // carries a weekday index — that is how the slot is identified underneath — but what the person
+    // is shown is the number they set with the steppers.
+    case 'week': return Number.isInteger(c.target?.weekday)
+      ? t('{0}: what’s planned', dayName(S, c.target.weekday))
+      : t('Change what’s planned on one day')
     default: return c.type
   }
 }

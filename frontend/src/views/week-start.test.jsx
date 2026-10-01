@@ -98,19 +98,29 @@ describe('Plan — the week schedule follows the setting', () => {
   // the days the plan *has* — seven of them is the only case where the answer is all seven.
   const ALL = [1, 2, 3, 4, 5, 6, 0]
 
-  it('runs Monday to Sunday by default', () => {
+  // A slot is titled as a session, not a weekday, so the setting cannot be read off the labels any
+  // more — and it should not be: the rows number 1..7 either way. What the setting *does* change
+  // is which day each numbered session falls on, so that is what these assert: a routine whose
+  // name is the day it is on, and the order those names come back in.
+  const byDay = () => ALL.slice()
+    .sort((a, b) => ((a - mocks.S.weekStart + 7) % 7) - ((b - mocks.S.weekStart + 7) % 7))
+    .map(d => 'Sunday Monday Tuesday Wednesday Thursday Friday Saturday'.split(' ')[d])
+
+  it('numbers the days from Monday by default', () => {
     mocks.S.weekRequired = ALL
     mount()
-    expect(dayRows().slice(0, 7)).toEqual(
-      ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])
+    expect(dayRows().slice(0, 7)).toEqual(['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'])
+    expect(byDay()).toEqual(['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'])
   })
 
-  it('runs Sunday to Saturday for a Sunday profile', () => {
+  it('numbers the days from Sunday for a Sunday profile', () => {
     mocks.S.weekStart = 0
     mocks.S.weekRequired = ALL
     mount()
-    expect(dayRows().slice(0, 7)).toEqual(
-      ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'])
+    // Same seven rows, same titles: a Sunday profile numbers its week from the other end, and the
+    // labels are deliberately identical so the setting is not mistaken for a change of plan.
+    expect(dayRows().slice(0, 7)).toEqual(['Day 1', 'Day 2', 'Day 3', 'Day 4', 'Day 5', 'Day 6', 'Day 7'])
+    expect(byDay()).toEqual(['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'])
   })
 
   it('keeps a routine attached to its day, not to its position in the list', () => {
@@ -120,7 +130,9 @@ describe('Plan — the week schedule follows the setting', () => {
     mocks.S.weekStart = 0
     mount()
     const rows = [...host.querySelectorAll('.item')]
-    expect(rows[0].querySelector('.tt').textContent).toBe('Sunday')
+    // Sunday comes first for a Sunday profile, so it is Day 1 and the routine is on it — the
+    // routine follows its day, not whichever row happens to be first.
+    expect(rows[0].querySelector('.tt').textContent).toBe('Day 1')
     expect(rows[0].textContent).toContain('Push')
     expect(rows[1].textContent).not.toContain('Push')
   })
@@ -140,16 +152,16 @@ describe('Plan — inline per-day routine management (combine routines)', () => 
   it('renders a sub-row per routine on a populated day, with the count hint', () => {
     mocks.S.week = { 1: ['r1', 'r2'] }
     mount()
-    const mon = dayContainer('Monday')
-    expect(mon.textContent).toContain('Push')
-    expect(mon.textContent).toContain('Core')
-    expect(mon.textContent).toContain('2 routines')
+    const first = dayContainer('Day 1')
+    expect(first.textContent).toContain('Push')
+    expect(first.textContent).toContain('Core')
+    expect(first.textContent).toContain('2 routines')
   })
 
   it('✕ removes a routine, and drops the day key on the last removal', () => {
     mocks.S.week = { 1: ['r1', 'r2'] }
     mount()
-    const removeButtons = () => [...dayContainer('Monday').querySelectorAll('button[aria-label="Remove"]')]
+    const removeButtons = () => [...dayContainer('Day 1').querySelectorAll('button[aria-label="Remove"]')]
     act(() => { removeButtons()[1].dispatchEvent(new Event('click', { bubbles: true })) })
     expect(mocks.S.week[1]).toEqual(['r1'])
     mount()
@@ -164,10 +176,10 @@ describe('Plan — inline per-day routine management (combine routines)', () => 
     mocks.S.week = {}
     mocks.S.weekRequired = [1, 2]
     mount()
-    const tue = dayContainer('Tuesday')
-    expect(tue.textContent).toContain('Empty')
-    expect(tue.textContent).not.toContain('Rest')
-    expect(tue.querySelectorAll('button[aria-label="Remove"]').length).toBe(0)
+    const second = dayContainer('Day 2')
+    expect(second.textContent).toContain('Empty')
+    expect(second.textContent).not.toContain('Rest')
+    expect(second.querySelectorAll('button[aria-label="Remove"]').length).toBe(0)
   })
 
   // …and a day the plan says nothing about is not a row at all. Rendering all seven days made a
@@ -176,6 +188,6 @@ describe('Plan — inline per-day routine management (combine routines)', () => 
     mocks.S.week = {}
     mocks.S.weekRequired = [1, 2]
     mount()
-    expect(dayContainer('Wednesday')).toBeUndefined()
+    expect(dayContainer('Day 3')).toBeUndefined()
   })
 })

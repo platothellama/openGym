@@ -3,7 +3,7 @@ import { useStore } from './store/useStore.js'
 import { useUI } from './store/useUI.js'
 import { EXDB, EXIDX, BODYPARTS, isCardio, isBodyweightEq, allExercises, equipmentOf, smOf, searchExercises, exOr, isAssisted, betterWeight, beatsWeight } from './lib/exercises.js'
 import { activeProfile, exAvailable, ALL_EQUIPMENT, newProfile } from './lib/equipment.js'
-import { fmtDate, fmtDateRange, fmtNum, fmtPlate, exerciseNameText, fmtVol, fmtDur, durPart, todayISO, isoOf, uid, exCount, routineCount, setsWorkCount, DAYN, DAYS, weekOrder, weekStartOf, weekDayOffset, MONTHS_LONG, ACCENTS } from './lib/format.js'
+import { fmtDate, fmtDateRange, fmtNum, fmtPlate, exerciseNameText, fmtVol, fmtDur, durPart, todayISO, isoOf, uid, exCount, routineCount, setsWorkCount, DAYS, weekOrder, weekStartOf, weekDayOffset, MONTHS_LONG, ACCENTS } from './lib/format.js'
 import { lastEntryFor, bestWeightFor, bestWeightForEntry, buildSets, effectiveRoutineIds, workoutDay, workoutVolume, setsDone, setsDoneActive, setUnitsTotal, lastBW, supersetUnits, sessionSections, unitOf, setLabel, defaultConfig, cleanupSg, modeOf, effortOf, EFFORT, capEffort, stepEffort, isBw, isPerSide, sideReps, workSetsDone, applyIntensifierPlan, MAX_PLANNED_WARMUPS, NOTE_MAX } from './lib/history.js'
 import { usesBar, defaultBarWeight, hasBarOverride, isNoBar } from './lib/bar.js'
 import { PLATE_SIZES, pairsOf, ownsPlates, withPlatePairs, withStandardPlates, withLoadKind, loadKindFor, baseWeightFor, dropGrid } from './lib/plates.js'
@@ -28,7 +28,7 @@ import { exerciseMuscleSnapshot, loadOfWorkouts, MUSCLES, MUSCLE_NAME, normalize
 import { parseImport, mergeImport } from './lib/import-csv.js'
 import { importHevyData, HevyApiError, HEVY_DEV_SETTINGS, mergeHevyRoutines } from './lib/import-hevy.js'
 import { buildPlanBundle, parsePlan, mergePlan, printPlan, planPrintHTML } from './lib/plan-share.js'
-import { optionalDaysOf, requiredDaysOf, syncFrequency, MAX_OPTIONAL } from './lib/week-plan.js'
+import { optionalDaysOf, requiredDaysOf, syncFrequency, slotNumber, MAX_OPTIONAL } from './lib/week-plan.js'
 import { estimate1RM, best1RM, is1RMRecord, REP_CAP } from './lib/onerm.js'
 import { exerciseHistory } from './lib/exercise-history.js'
 import { policyFor, defaultIncrement, POLICIES_FOR, POLICY_NAME, POLICY_DESC, MAX_BW_SETS, weightIncrement } from './lib/progression.js'
@@ -152,9 +152,6 @@ export function loadStarterPlan(planId) {
   return true
 }
 
-// Intl joins the days the way each language does it — "and" vs "und", "、" in Chinese.
-const dayList = days => new Intl.ListFormat(dateLocale()).format(days.map(d => t(DAYN[d])))
-
 function StarterPlanChooser({ close }) {
   const week = useStore(s => s.S.week)
   const routines = useStore(s => s.S.routines)
@@ -167,7 +164,11 @@ function StarterPlanChooser({ close }) {
     if (!days.some(taken)) { loadStarterPlan(id); return }
     confirmSheet({
       title: t('Load {0}?', name),
-      message: t('The new plan will be scheduled on {0}. Existing routines are kept — only those days of the weekly plan change.', dayList(days)),
+      // How many sessions it fills, not which weekdays. A starter plan does claim fixed days, but
+      // naming them here would reintroduce what the frequency model removed everywhere else — a
+      // dialog saying "Monday" for a slot the person reads as "Day 2" — and the count is the part
+      // that is actually about to change, since the sessions keep their routines either way.
+      message: t('It will fill {0} sessions a week. Existing routines are kept — only the sessions it lands on change.', new Intl.NumberFormat(dateLocale()).format(days.length)),
       confirmText: t('Load plan'),
       onConfirm: () => loadStarterPlan(id)
     })
@@ -1897,7 +1898,7 @@ function DayAssign({ day, close }) {
   })
   const full = !isOptional && optCount >= MAX_OPTIONAL
   return <>
-    <h3>{t(DAYN[day])}{isOptional && <span className="tag" style={{ marginLeft: 8 }}>{t('Optional')}</span>}</h3>
+    <h3>{isOptional ? t('Optional day {0}', slotNumber(st, day)) : t('Day {0}', slotNumber(st, day))}</h3>
     <div className="muted small" style={{ marginBottom: 12 }}>
       {isOptional
         ? t('Train it if you can — skipping an optional day is not a missed session.')
