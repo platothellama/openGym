@@ -9,7 +9,7 @@ import { todayISO } from '../lib/format.js'
 // The chat is where a plan is imported. These pin that the Import button applies the pending
 // plan through the store, writes the decision into the thread, and leaves today startable.
 const mocks = vi.hoisted(() => {
-  const state = { S: null, pending: null, job: null, community: false, maxMessageLen: 2200, nav: vi.fn(), toast: vi.fn(), openSheet: vi.fn(), refresh: vi.fn() }
+  const state = { S: null, pending: null, job: null, community: false, maxMessageLen: 2200, nav: vi.fn(), toast: vi.fn(), openSheet: vi.fn(), refresh: vi.fn(), resolvePending: vi.fn(() => Promise.resolve({})) }
   state.storeSnapshot = () => ({
     S: state.S,
     user: { id: 'u1' },
@@ -35,7 +35,7 @@ vi.mock('../store/useUI.js', () => {
 vi.mock('react-router-dom', () => ({ useNavigate: () => mocks.nav }))
 vi.mock('../lib/coach-api.js', () => ({
   useCoachStatus: () => ({ pending: mocks.pending, job: mocks.job, cap: null, loading: false, lastError: null, last: null, refresh: mocks.refresh, maxMessageLen: mocks.maxMessageLen }),
-  resolvePending: vi.fn(() => Promise.resolve({})),
+  resolvePending: mocks.resolvePending,
   refinePlan: vi.fn(() => Promise.resolve({})),
   requestReview: vi.fn(() => Promise.resolve({})),
   requestDebrief: vi.fn(() => Promise.resolve({})),
@@ -251,6 +251,9 @@ describe('the Coach chat', () => {
     const tabs = () => [...container.querySelectorAll('.pcard-tab')].map(b => b.textContent)
     await mount({ id: 'p1', kind: 'create', bundle: { ...bundle({ 1: 'x1', 3: 'x1', 2: 'x2' }), weekOptional: [2] } })
     expect(tabs()).toEqual(['Full body A', 'Full body B · optional'])
+    // The routine title itself says so too, once its tab is open.
+    await click(container.querySelectorAll('.pcard-tab')[1])
+    expect(container.querySelector('.pcard-rt-h b').textContent).toBe('Full body B · optional')
     await mount({ id: 'p1', kind: 'create', bundle: bundle({ 1: 'x1', 2: 'x2' }) })
     expect(tabs()).toEqual(['Full body A', 'Full body B'])
   })
@@ -276,5 +279,40 @@ describe('the Coach chat', () => {
     expect(byText(/^Compare$/)).toBeFalsy()
     await mount(null, null, { community: true })
     expect(byText(/^Compare$/)).toBeTruthy()
+  })
+})
+
+// A session answer is asked for in the workout and outlives the sheet that started it. The pending
+// slot is shared with the chat's own proposals, so it can land here - and a review card with no
+// suggestions in it would make it look like the Coach had answered nothing.
+describe('a session answer waiting in the chat', () => {
+  const live = () => {
+    const S = state()
+    S.active = {
+      id: 'w-live',
+      entries: [{ id: '0001', target: { id: '0001', sets: 3, reps: 10, weight: 20, restSec: 120, mode: 'reps' }, plan: { kind: 'up' }, sets: [{ w: 20, r: 10 }, { w: 20, r: 10 }, { w: 20, r: 10 }] }],
+    }
+    return S
+  }
+  const answer = () => ({
+    id: 'p-session', kind: 'session', summary: 'Short night — holding the jump.',
+    targets: [{ id: '0001', weight: 22.5, why: 'Held at last week’s load.' }],
+  })
+
+  it('reads as today’s numbers, not as an empty review', async () => {
+    await mount(answer(), null, { S: live() })
+    expect(container.textContent).toContain('Today’s targets')
+    expect(container.textContent).toContain('Short night — holding the jump.')
+    expect(container.textContent).toContain('22.5')
+    expect(byText(/Apply 1 exercise/)).toBeTruthy()
+  })
+
+  it('writes it to the session on the screen and answers the job', async () => {
+    const S = live()
+    await mount(answer(), null, { S })
+    await click(byText(/Apply 1 exercise/))
+    expect(S.active.entries[0].target).toMatchObject({ weight: 22.5 })
+    expect(mocks.resolvePending).toHaveBeenCalledWith({ accepted: ['0001'] })
+    expect(S.coach.chat.some(c => c.role === 'coach' && c.kind === 'applied')).toBe(true)
   })
 })

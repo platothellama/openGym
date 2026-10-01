@@ -30,6 +30,7 @@ import {
 import { insightsFor, sessionInsights } from '../lib/coach-insights.js'
 import { useCoachStatus, requestReview, requestDebrief, requestPlan, refinePlan, resolvePending, cohortStats, setCohortShare, jobErrorText, awaitedJob, settleAwaited } from '../lib/coach-api.js'
 import { confirmSheet } from '../sheets.jsx'
+import { SessionCard } from '../components/CoachSessionSheet.jsx'
 import Icon from '../components/Icon.jsx'
 import { glyphOf } from '../lib/glyphs.js'
 import LineChart from '../components/LineChart.jsx'
@@ -207,7 +208,13 @@ export default function CoachChat() {
         ? <PlanCard p={pending} S={S} update={update} toast={toast} nav={nav} refresh={refresh} />
         : pending.kind === 'debrief'
           ? <DebriefCard p={pending} S={S} update={update} toast={toast} refresh={refresh} />
-          : <ReviewCard p={pending} S={S} update={update} toast={toast} refresh={refresh} />)}
+          : pending.kind === 'session'
+            // A session answer belongs to a live workout, and it is asked for there. But a job
+            // outlives the sheet that started it and the pending slot is shared, so if it lands
+            // here it has to be readable and refusable here too rather than rendering as a review
+            // with no suggestions in it.
+            ? <SessionCard p={pending} S={S} update={update} toast={toast} refresh={refresh} />
+            : <ReviewCard p={pending} S={S} update={update} toast={toast} refresh={refresh} />)}
 
       <div ref={endRef} />
     </div>
@@ -296,6 +303,16 @@ function Typing({ S, kind, coachLocal, config }) {
 
 /* ---------------------------------- the plan ---------------------------------- */
 
+/** Routine ids that run only on optional days — skippable sessions worth tagging. */
+const optionalOnlyIds = b => {
+  const opt = new Set((b?.weekOptional || []).map(Number))
+  const daysOf = {}
+  Object.entries(b?.week || {}).forEach(([d, rid]) => { (daysOf[rid] = daysOf[rid] || []).push(Number(d)) })
+  return new Set((b?.routines || [])
+    .filter(r => { const days = daysOf[r.id] || []; return days.length && days.every(d => opt.has(d)) })
+    .map(r => r.id))
+}
+
 function PlanCard({ p, S, update, toast, nav, refresh }) {
   const b = p.bundle
   const [tab, setTab] = useState(0)
@@ -303,18 +320,9 @@ function PlanCard({ p, S, update, toast, nav, refresh }) {
   const r = b.routines[Math.min(tab, b.routines.length - 1)]
   const weekDays = useMemo(() => new Set(Object.keys(b.week || {}).map(Number)), [b])
   const weekOpt = useMemo(() => new Set((b.weekOptional || []).map(Number)), [b])
-  // Routines that run only on optional days get an "optional" tag on their tab: they are
-  // skippable sessions, and nothing about the tab order says so on its own.
-  const optOnly = useMemo(() => {
-    const daysOf = {}
-    Object.entries(b.week || {}).forEach(([d, rid]) => { (daysOf[rid] = daysOf[rid] || []).push(Number(d)) })
-    const out = new Set()
-    ;(b.routines || []).forEach(r => {
-      const days = daysOf[r.id] || []
-      if (days.length && days.every(d => weekOpt.has(d))) out.add(r.id)
-    })
-    return out
-  }, [b, weekOpt])
+  // Routines that run only on optional days get an "optional" tag on their tab and title:
+  // they are skippable sessions, and nothing about the tab order says so on its own.
+  const optOnly = useMemo(() => optionalOnlyIds(b), [b])
 
   const accept = () => {
     try {
@@ -356,7 +364,7 @@ function PlanCard({ p, S, update, toast, nav, refresh }) {
         {b.routines.map((x, i) => <button key={x.id || i} className={'pcard-tab' + (i === tab ? ' on' : '')} onClick={() => setTab(i)}><Icon name={glyphOf(x.emoji)} />{x.name}{optOnly.has(x.id) ? ' · ' + t('optional') : ''}</button>)}
       </div>}
 
-      {r && <RoutineBlock r={r} unit={S.unit} speedUnit={speedUnitOf(S)} />}
+      {r && <RoutineBlock r={r} unit={S.unit} speedUnit={speedUnitOf(S)} optional={optOnly.has(r.id)} />}
 
       <div className="pcard-row">
         <span className="lrow-m"><span className="lrow-t">{t('Use this weekly schedule')}</span><span className="lrow-s">{t('Replaces your current week. Days this plan leaves empty become rest days.')}</span></span>
@@ -389,8 +397,8 @@ const PlanWeek = ({ req, opt, ws }) => <div className="pcard-week">
   </span>}
 </div>
 
-const RoutineBlock = ({ r, unit, speedUnit }) => <div className="pcard-rt">
-  <div className="pcard-rt-h"><b><Icon name={glyphOf(r.emoji)} />{r.name}</b><span>{t('{0} exercises', r.ex.length)}</span></div>
+const RoutineBlock = ({ r, unit, speedUnit, optional }) => <div className="pcard-rt">
+  <div className="pcard-rt-h"><b><Icon name={glyphOf(r.emoji)} />{r.name}{optional ? ' · ' + t('optional') : ''}</b><span>{t('{0} exercises', r.ex.length)}</span></div>
   {!!r.why && <div className="pcard-why">{r.why}</div>}
   {r.ex.map((e, i) => <div key={i} className="pcard-ex">
     <div className="pcard-ex-r"><span className="pcard-ex-n">{exName(e.id)}</span><span className="pcard-ex-l">{exLine(e, unit, speedUnit)}</span></div>
@@ -647,6 +655,7 @@ function ProposalDetail({ entry, S }) {
   // From the log's own light bundle, which carries the optional slots for the same reason the live
   // card does: a re-opened plan that hid them would read as a smaller week than the one imported.
   const weekOpt = useMemo(() => new Set((b?.weekOptional || []).map(Number)), [b])
+  const optOnly = useMemo(() => optionalOnlyIds(b), [b])
   return <div className="pdetail">
     <div className="pcard-hd" style={{ paddingInline: 0 }}>
       <div className="pcard-eyebrow">{kind === 'create' ? t('Plan') : kind === 'debrief' ? t('Workout debrief') : t('Suggestions')} · {fmtDate(new Date(entry.at).toISOString().slice(0, 10))}</div>
@@ -668,9 +677,9 @@ function ProposalDetail({ entry, S }) {
     {kind === 'create' && b && <>
       <PlanWeek req={weekDays.size} opt={weekOpt} ws={weekStartOf(S)} />
       {b.routines.length > 1 && <div className="pcard-tabs" style={{ paddingInline: 0 }}>
-        {b.routines.map((x, i) => <button key={x.id || i} className={'pcard-tab' + (i === tab ? ' on' : '')} onClick={() => setTab(i)}><Icon name={glyphOf(x.emoji)} />{x.name}</button>)}
+        {b.routines.map((x, i) => <button key={x.id || i} className={'pcard-tab' + (i === tab ? ' on' : '')} onClick={() => setTab(i)}><Icon name={glyphOf(x.emoji)} />{x.name}{optOnly.has(x.id) ? ' · ' + t('optional') : ''}</button>)}
       </div>}
-      {r && <RoutineBlock r={r} unit={S.unit} speedUnit={speedUnitOf(S)} />}
+      {r && <RoutineBlock r={r} unit={S.unit} speedUnit={speedUnitOf(S)} optional={optOnly.has(r.id)} />}
       <p className="pcard-sum" style={{ fontSize: 13 }}>{entry.scheduled ? t('Your week was set to this schedule.') : t('Imported without changing your week.')}</p>
     </>}
     {kind === 'create' && !b && <p className="pcard-sum">{t('This plan was imported before the app kept proposals; only its summary is left.')}</p>}
