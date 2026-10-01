@@ -36,6 +36,7 @@ import { normalizeRepRange } from './lib/rep-range.js'
 import { MOBILE, shareExport, printHtml } from './lib/mobile.js'
 import { speedUnitOf, toSpeed, fromSpeed } from './lib/speed.js'
 import { convertBodyWeight } from './lib/units.js'
+import { SITES, compareEntry, compositionRead, latestBySite, latestComparison, latestMeasurements, normalizeMeasurements, upsertMeasurements } from './lib/measurements.js'
 import { buildCompletedWorkout } from './lib/finish-workout.js'
 import { isWarmupRow, hasCompletedWork } from './lib/workout-model.js'
 import { saveSessionAsRoutine } from './lib/session-routines.js'
@@ -342,6 +343,157 @@ function WeighIns() {
   </>
 }
 export const weighInsSheet = () => ui().openSheet(close => <WeighIns close={close} />)
+
+/* ============================ measurements ============================ */
+// Girths, as a monthly tape session rather than a per-workout prompt: the scale already asks
+// every session, and a tape is a once-a-month job whose value is entirely in the comparison with
+// the last one. Stored in cm (see S.measurements); displayed in cm or inches the way the profile's
+// own settings ask for a *length* unit, which is deliberately not S.unit — that is what the bar is
+// weighed in, and nobody measuring a waist in pounds because their plates are.
+//
+// A change is only drawn once it clears the noise floor and sits MIN_GAP_DAYS from the entry it is
+// compared against (lib/measurements.js), so the sheet says "not much has moved" instead of
+// printing an arrow on a tape that read half a centimetre differently this morning.
+const CM_PER_IN = 2.54
+
+/** The girth display unit: the profile's own choice, or its weight unit's customary length. */
+function girthUnitOf(S) {
+  return S.measureUnit || (S.unit === 'lb' ? 'in' : 'cm')
+}
+
+const cmToDisplay = (cm, u) => (u === 'in' ? Math.round((cm / CM_PER_IN) * 10) / 10 : Math.round(cm * 10) / 10)
+const displayToCm = (n, u) => (u === 'in' ? Math.round(n * CM_PER_IN * 10) / 10 : Math.round(n * 10) / 10)
+
+// What the sheet says about the pattern, in words that do not assume a direction of travel. Both a
+// cut and a bulk are progress; which one this is depends on the goal, and the goal is the Coach's
+// to read, not this row's to assert.
+const READ_TEXT = {
+  recomp: 'Waist down, limbs up — the scale can stay flat while this happens.',
+  gaining: 'Limbs up, waist flat or up — what a bulk looks like on a tape.',
+  cutting: 'Limbs flat or down, waist down — what a cut looks like on a tape.',
+  reverse: 'Limbs down, waist up. Worth a look before adding volume.',
+  mixed: 'Sites are moving in different directions.',
+  stable: 'No site has moved past what a tape can be trusted to say.',
+}
+
+export function MeasureSummary() {
+  const st = useStore(s => s.S)
+  const unit = girthUnitOf(st)
+  const cmp = useMemo(() => latestComparison(st.measurements), [st.measurements])
+  const read = useMemo(() => compositionRead(st.measurements), [st.measurements])
+  const last = latestMeasurements(st.measurements)
+  if (!last) return <div className="muted small">{t('No entries yet — measure every month or two and the tape starts telling you something the scale cannot.')}</div>
+  const rows = SITES.filter(site => cmp?.sites[site.id] != null)
+  return <>
+    {read && <>
+      <div className="small" style={{ marginBottom: 8 }}>{t(READ_TEXT[read.value])}</div>
+      {cmp.from && <div className="muted small" style={{ marginBottom: 10 }}>{t('Compared with {0}', fmtDate(cmp.from, true))}</div>}
+    </>}
+    {rows.map(site => {
+      const r = cmp.sites[site.id]
+      return <div key={site.id} className="row between" style={{ padding: '7px 2px', borderBottom: '1px solid var(--sep)' }}>
+        <span className="small">{t(site.label)}</span>
+        <span className="row" style={{ gap: 10 }}>
+          {r.changed && <span className="small row" style={{ gap: 2, color: r.change > 0 ? 'var(--orange)' : 'var(--green)' }}>
+            <Icon name={r.change > 0 ? 'arrowUp' : 'arrowDown'} style={{ fontSize: 12 }} />{fmtNum(Math.abs(cmToDisplay(r.change, unit)))}
+          </span>}
+          <b className="small">{fmtNum(cmToDisplay(r.current, unit))} <span className="muted" style={{ fontWeight: 400 }}>{unit}</span></b>
+        </span>
+      </div>
+    })}
+    {!cmp && <div className="muted small" style={{ marginTop: 8 }}>{t('One entry is a start — a change needs a second one at least four weeks later.')}</div>}
+    <div className="row" style={{ justifyContent: 'flex-end', marginTop: 8 }}>
+      <Button size="sm" variant="ghost" trailingIcon="chevronRight" onClick={allMeasurementsSheet}>{t('All measurements')}</Button>
+    </div>
+  </>
+}
+
+// One tape session. Every site is optional and blank means "not measured today" rather than zero,
+// so a waist-only session never wipes the arm you measured three weeks ago.
+function MeasurementSheet({ close }) {
+  const st = useStore(s => s.S)
+  const unit = girthUnitOf(st)
+  const last = latestBySite(st.measurements)
+  const [v, setV] = useState(() => Object.fromEntries(SITES.map(s => [s.id, null])))
+  const today = todayISO()
+  const already = useMemo(() => normalizeMeasurements(st.measurements).find(e => e.d === today), [st.measurements, today])
+  const set = (id, n) => setV(prev => ({ ...prev, [id]: n }))
+  const save = () => {
+    const out = {}
+    for (const [id, n] of Object.entries(v)) if (Number(n) > 0) out[id] = displayToCm(Number(n), unit)
+    if (!Object.keys(out).length) { toast(t('Measure at least one site')); return }
+    update(s => { s.measurements = upsertMeasurements(s.measurements, today, out) })
+    close()
+    toast(t('Measurements saved'))
+  }
+  return <>
+    <h3>{t('Measurements')}</h3>
+    <div className="muted small" style={{ marginBottom: 12 }}>{t('A tape every month or two. Leave a site blank if you did not measure it.')}</div>
+    {already && <div className="small" style={{ marginBottom: 10, color: 'var(--yellow)' }}>{t('Today is already recorded — saving overwrites the sites you fill in.')}</div>}
+    {SITES.map(site => {
+      const prev = last[site.id]
+      return <div key={site.id} className="row between" style={{ gap: 10, padding: '6px 0' }}>
+        <span className="small" style={{ flex: 1 }}>
+          {t(site.label)}
+          {prev != null && <span className="muted" style={{ display: 'block', fontSize: '0.75rem' }}>{t('Last: {0}', fmtNum(cmToDisplay(prev, unit)) + ' ' + unit)}</span>}
+        </span>
+        <div style={{ width: 96 }}>
+          <NumberField nullable value={v[site.id] ?? ''} onChange={n => set(site.id, n)} placeholder={prev != null ? fmtNum(cmToDisplay(prev, unit)) : ''} aria-label={t(site.label)} />
+        </div>
+      </div>
+    })}
+    <div className="muted small" style={{ margin: '10px 0 0' }}>{t('Stored in centimetres, shown in {0}.', unit)}</div>
+    <div style={{ height: 14 }} />
+    <Button variant="primary" onClick={save}>{t('Save measurements')}</Button>
+  </>
+}
+export const measurementSheet = () => ui().openSheet(close => <MeasurementSheet close={close} />)
+
+// Every tape session, newest first, with each session's sites and the delete button.
+function AllMeasurements() {
+  const st = useStore(s => s.S)
+  const unit = girthUnitOf(st)
+  const entries = useMemo(() => normalizeMeasurements(st.measurements).reverse(), [st.measurements])
+  if (!entries.length) return <>
+    <h3>{t('Measurements')}</h3>
+    <div className="empty"><div className="ico"><Icon name="ruler" /></div>{t('No entries yet.')}</div>
+  </>
+  return <>
+    <h3 style={{ marginBottom: 2 }}>{t('Measurements')}</h3>
+    <div className="muted small" style={{ marginBottom: 10 }}>
+      {t(entries.length === 1 ? '{0} session' : '{0} sessions', entries.length)} · {unit}
+    </div>
+    {entries.map(e => {
+      const cmp = compareEntry(st.measurements, e)
+      const del = () => update(s => { s.measurements = s.measurements.filter(x => x.d !== e.d) })
+      const ask = () => confirmSheet({
+        title: t('Delete measurements?'), message: fmtDate(e.d, true), confirmText: t('Delete'), danger: true, onConfirm: del,
+      })
+      return <div key={e.d} className="list" style={{ marginBottom: 10, gap: 0 }}>
+        <div className="row between" style={{ padding: '8px 2px' }}>
+          <b className="small">{fmtDate(e.d, true)}</b>
+          {cmp?.from && <span className="muted" style={{ fontSize: '0.75rem' }}>{t('vs {0}', fmtDate(cmp.from, true))}</span>}
+        </div>
+        {SITES.filter(site => e.v[site.id] != null).map(site => {
+          const r = cmp?.sites?.[site.id]
+          return <div key={site.id} className="row between" style={{ padding: '6px 2px', borderBottom: '1px solid var(--sep)' }}>
+            <span className="small muted">{t(site.label)}</span>
+            <span className="row" style={{ gap: 10 }}>
+              {r?.changed && <span className="small row" style={{ gap: 2, color: r.change > 0 ? 'var(--orange)' : 'var(--green)' }}>
+                <Icon name={r.change > 0 ? 'arrowUp' : 'arrowDown'} style={{ fontSize: 12 }} />{fmtNum(Math.abs(cmToDisplay(r.change, unit)))}
+              </span>}
+              <b className="small">{fmtNum(cmToDisplay(e.v[site.id], unit))} <span className="muted" style={{ fontWeight: 400 }}>{unit}</span></b>
+            </span>
+          </div>
+        })}
+        <div className="row" style={{ justifyContent: 'flex-end', padding: '6px 2px' }}>
+          <Button size="sm" variant="ghost" onClick={ask} style={{ color: 'var(--red)' }}>{t('Delete')}</Button>
+        </div>
+      </div>
+    })}
+  </>
+}
+export const allMeasurementsSheet = () => ui().openSheet(close => <AllMeasurements close={close} />)
 
 /* ============================ import from another app ============================ */
 // Shows what a parsed export would actually do before anything is written. An import is

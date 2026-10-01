@@ -4,7 +4,7 @@ import { useStore } from '../store/useStore.js'
 import { effectiveRoutines, effectiveRoutineIds, nextTrainingDay, streakWeeks, lastBW, setsDoneActive } from '../lib/history.js'
 import { fmtNum, fmtDate, todayISO, isoOf, weekKey, weekStartOf, weekDayOffset, DAYS, DAYN } from '../lib/format.js'
 import { t, dateLocale } from '../lib/i18n.js'
-import { bwSheet, goalSheet, dayOverrideSheet, calendarSheet, startFlow, starterPlanSheet, bwDeltaColor, weighInsSheet } from '../sheets.jsx'
+import { bwSheet, goalSheet, dayOverrideSheet, calendarSheet, startFlow, starterPlanSheet, bwDeltaColor, weighInsSheet, MeasureSummary, measurementSheet } from '../sheets.jsx'
 import LineChart from '../components/LineChart.jsx'
 import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
@@ -176,6 +176,15 @@ export default function Home() {
       </> : <div className="muted small">{S.weighIn === false
         ? t('No entries yet — log your weight to start the curve.')
         : t("No entries yet — log your weight to start the curve. It's also asked before every workout.")}</div>}
+      {/* Girths, on the same card as the scale: the reading that tells a recomp from a stall, which
+          the scale above cannot give on its own. Its own sheet, its own monthly cadence. */}
+      <div style={{ borderTop: '1px solid var(--sep)', marginTop: 12, paddingTop: 10 }}>
+        <div className="row between" style={{ marginBottom: 6 }}>
+          <span className="small" style={{ fontWeight: 600 }}>{t('Measurements')}</span>
+          <Button size="sm" icon="plus" onClick={() => measurementSheet()}>{t('Measure')}</Button>
+        </div>
+        <MeasureSummary />
+      </div>
     </div>}
 
     <div className="card tappable" style={{ cursor: 'pointer' }} {...tappable(() => calendarSheet())}>

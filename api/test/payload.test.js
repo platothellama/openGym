@@ -315,8 +315,86 @@ test('the cohort rides along on a review and a debrief only when handed in', () 
   assert.equal('cohort' in payload.build(sampleState(), { handle: handleFor('u'), kind: 'create', cohort }), false);
 });
 
-test('a refine with no plan to refine is a fresh plan with a note, never refine.previous = null', () => {
-  const S = sampleState();
+/* Girths. The point of the block is that a difference under a centimetre never reaches the model
+   as a change, so the first test is about absence: an untouched profile, and one whose tape read
+   half a centimetre differently, must both look like a profile with nothing to say. */
+test('girths ride along on a review, a create and a debrief — and stay off a session job', () => {
+  const S = sampleState({ measurements: [
+    { d: '2026-06-01', t: 1, v: { waist: 85, arm: 36 } },
+    { d: '2026-09-01', t: 2, v: { waist: 82, arm: 38.5 } }
+  ] });
+  for (const kind of ['review', 'create', 'debrief']) {
+    const p = payload.build(kind === 'debrief' ? { ...S, ...debriefState(), measurements: S.measurements } : S, { handle: handleFor('u'), kind });
+    assert.ok(p.measurements, `${kind} carries the girths`);
+  }
+  const session = payload.build(S, { handle: handleFor('u'), kind: 'session', session: {} });
+  assert.equal('measurements' in session, false, 'a session job tunes today\'s loads and must not see a tape');
+});
+
+test('a profile that has never measured has no measurements key at all', () => {
+  const p = payload.build(sampleState(), { handle: handleFor('u'), kind: 'review' });
+  assert.equal('measurements' in p, false);
+  assert.equal('measurements' in payload.build(sampleState({ measurements: [] }), { handle: handleFor('u'), kind: 'review' }), false);
+  // An entry with no usable day, or no site, is not a tape session either.
+  const junk = payload.build(sampleState({ measurements: [{ v: { waist: 82 } }, { d: '2026-09-01', v: {} }, { d: '2026-09-01', v: { waist: 0 } }] }), { handle: handleFor('u'), kind: 'review' });
+  assert.equal('measurements' in junk, false);
+});
+
+test('a girth difference under the noise floor is withheld, and never arrives as a trend', () => {
+  const p = payload.build(sampleState({ measurements: [
+    { d: '2026-06-01', t: 1, v: { waist: 85, arm: 36 } },
+    { d: '2026-09-01', t: 2, v: { waist: 84.5, arm: 36.4 } }
+  ] }), { handle: handleFor('u'), kind: 'review' });
+  assert.equal('change' in p.measurements, false, 'half a centimetre is the tape, not the body');
+  // The readings themselves are still context — only the claim to be a trend is withheld.
+  assert.deepEqual(p.measurements.latest, { waist: 84.5, arm: 36.4 });
+  assert.equal(p.measurements.sessions, 2);
+  assert.equal(p.measurements.from, '2026-06-01');
+  assert.equal(p.measurements.to, '2026-09-01');
+});
+
+test('two readings days apart are withheld as a change, however far apart they are', () => {
+  // The noise floor is not the only guard. A 3 cm jump overnight is past the floor and still not a
+  // trend: both readings carry the same morning, the same tape, the same posture.
+  const p = payload.build(sampleState({ measurements: [
+    { d: '2026-09-01', t: 1, v: { waist: 82 } },
+    { d: '2026-09-04', t: 2, v: { waist: 85 } }
+  ] }), { handle: handleFor('u'), kind: 'review' });
+  assert.equal(p.measurements.days, 3);
+  assert.equal('change' in p.measurements, false, 'three days is one measurement taken twice');
+  // Still sent as context, so the Coach knows the tape exists.
+  assert.deepEqual(p.measurements.latest, { waist: 85 });
+});
+
+test('a window past the minimum gap offers its change', () => {
+  const p = payload.build(sampleState({ measurements: [
+    { d: '2026-08-01', t: 1, v: { waist: 85 } },
+    { d: '2026-09-04', t: 2, v: { waist: 82 } }
+  ] }), { handle: handleFor('u'), kind: 'review' });
+  assert.equal(p.measurements.days, 34);
+  assert.deepEqual(p.measurements.change, { waist: -3 });
+});
+
+test('girths are always in centimetres, whatever the profile weighs in', () => {
+  const S = sampleState({ unit: 'lb', measurements: [{ d: '2026-09-01', t: 1, v: { waist: 82 } }] });
+  const p = payload.build(S, { handle: handleFor('u'), kind: 'review' });
+  assert.equal(p.measurements.unit, 'cm', 'a girth is not a load; the weight unit does not apply to it');
+  assert.equal(p.meta.unit, 'lb', 'the weight unit is untouched and still says lb');
+  assert.deepEqual(p.measurements.latest, { waist: 82 });
+});
+
+test('the girth block copies sites by name and drops a key that is not a site', () => {
+  const p = payload.build(sampleState({ measurements: [
+    { d: '2026-09-01', t: 1, v: { waist: 82, secretProfileField: 99, arm: '36' } }
+  ] }), { handle: handleFor('u'), kind: 'review' });
+  // Only the named sites are copied, and a numeric string is coerced to the number it spells
+  // (num()'s convention everywhere in this file) rather than travelling as a string.
+  assert.deepEqual(Object.keys(p.measurements.latest).sort(), ['arm', 'waist']);
+  assert.equal(typeof p.measurements.latest.arm, 'number');
+  assert.ok(!JSON.stringify(p).includes('secretProfileField'), 'only the named sites are copied out');
+});
+
+test('a refine with no plan to refine is a fresh plan with a note, never refine.previous = null', () => {  const S = sampleState();
   const p = payload.build(S, { handle: handleFor('u1'), kind: 'create', refine: 'three days, no barbell', previous: null });
   assert.equal(p.task, 'create');
   assert.equal(p.refine, undefined);

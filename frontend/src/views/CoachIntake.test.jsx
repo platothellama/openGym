@@ -15,7 +15,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CoachIntake from './CoachIntake.jsx'
 import { requestPlan, disclosure } from '../lib/coach-api.js'
-import { CONSENT_VERSION } from '../lib/coach.js'
+import { CATEGORY_TEXT, CONSENT_VERSION } from '../lib/coach.js'
 import { MAX_OPTIONAL } from '../lib/week-plan.js'
 
 globalThis.IS_REACT_ACT_ENVIRONMENT = true
@@ -178,7 +178,8 @@ describe('CoachIntake — the consent screen', () => {
   it('lists the built-in categories first, then whatever the server says actually goes', async () => {
     vi.mocked(disclosure).mockResolvedValue({ categories: ['plan', 'prefs'], providerLabel: 'Anthropic', payer: 'you', host: 'api.anthropic.com' })
     mount()
-    expect(all('.ob-consent-row')).toHaveLength(10)                      // CATEGORY_TEXT, before the call lands
+    // Read the count off CATEGORY_TEXT so adding a category does not mean editing this line.
+    expect(all('.ob-consent-row')).toHaveLength(Object.keys(CATEGORY_TEXT).length)
     await settle()
     expect(all('.ob-consent-row')).toHaveLength(2)
     expect(host.textContent).toContain('Sent straight to api.anthropic.com with your own API key')
@@ -201,7 +202,7 @@ describe('CoachIntake — the consent screen', () => {
     mocks.config = { coach: { enabled: true, providerLabel: 'Claude Agent SDK' } }
     mount(); await settle()
     expect(host.textContent).toContain('Sent to Claude Agent SDK, running on this server')
-    expect(all('.ob-consent-row')).toHaveLength(10)     // and the built-in list stands in
+    expect(all('.ob-consent-row')).toHaveLength(Object.keys(CATEGORY_TEXT).length)  // and the built-in list stands in
 
     act(() => root.unmount())
     mocks.config = { coach: { enabled: true } }

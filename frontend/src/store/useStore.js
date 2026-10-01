@@ -75,6 +75,12 @@ export const DEF = {
   unit: 'kg', restSec: 90, restPauseSec: 15, sound: true, soundOnSilent: false, timerFlash: false, timedSetOvertime: false, keepAwake: true, lang: 'en',
   theme: 'dark', accent: 'lime', body: 'male', targetW: null,
   bodyweight: [], routines: [], week: {}, dayPlan: {},
+  // Girth measurements — one entry per tape session, `{ d, t, v: { waist, arm, … } }`, the same
+  // shape S.bodyweight uses so a day re-measured is an edit and sync-merge can treat them alike.
+  // ALWAYS in centimetres, whatever `unit` says: a girth is not a load, and switching the bar to
+  // pounds must not restate a waist. The sheet converts in and out; lib/units.js never sees it.
+  // Read back through lib/measurements.js, which is the only thing that should interpret it.
+  measurements: [],
   // Which weekdays in `week` are the optional ones — the "train it if you can" days. A plan is
   // set by frequency (how many days a week, how many optional), not by naming weekdays, so the
   // app lays these out; see lib/week-plan.js. Empty for a plan with no optional days, which is

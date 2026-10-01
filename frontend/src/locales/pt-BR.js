@@ -595,6 +595,14 @@ export const PT_BR_OVERRIDES = {
   'Not quite right? Say what to change below and I will revise the whole plan.': 'Não ficou bom? Diga abaixo o que mudar e eu reviso o plano inteiro.',
   'Pick one to continue.': 'Escolha uma para continuar.',
   'Pick what you will actually keep, not the best week you can imagine.': 'Escolha o que você vai realmente cumprir, não a melhor semana que consegue imaginar.',
+  // pt-PT says "registado"; Brazilian Portuguese says "registrado".
+  'Today is already recorded — saving overwrites the sites you fill in.': 'Hoje já está registrado — ao salvar, os pontos que preencher forem substituídos.',
+  // pt-PT says "anca"; Brazilian Portuguese says "quadril".
+  Hips: 'Quadril',
+  'FitAI food: {0} days logged': 'Alimentação no FitAI: {0} dias registrados',
+  'FitAI food: {0} kcal/day avg ({1} days logged)': 'Alimentação no FitAI: média de {0} kcal/dia ({1} dias registrados)',
+  'FitAI food: {0} kcal/day avg vs {1} target ({2} days logged)': 'Alimentação no FitAI: média de {0} kcal/dia para um objetivo de {1} ({2} dias registrados)',
+  '{0} days logged': '{0} dias registrados',
   'Reading your training…': 'Lendo seu treino…',
   'Sent straight to {0} with your own API key — you pay for every request.': 'Enviado direto para {0} com a sua própria chave de API — você paga cada pedido.',
   'Sent to {0}, running on this server under the instance owner’s account.': 'Enviado para {0}, que roda neste servidor na conta do proprietário.',

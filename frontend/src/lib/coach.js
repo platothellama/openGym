@@ -69,6 +69,7 @@ export const CATEGORY_TEXT = {
   plan: ['Your plan', 'Routines, exercises, sets and reps, your weekly schedule and progression settings.'],
   training: ['Your logged training', 'Sets you logged in the review window — weights, reps, times, effort ratings and how long sessions took.'],
   bodyweight: ['Body weight', 'Weigh-ins from the same window, and your goal weight if you set one.'],
+  measurements: ['Measurements', 'The tape-measure sites you have recorded, and how they have changed. Only the changes big enough to be real travel; a difference under a centimetre is the tape, not the body.'],
   profile: ['What you tell the Coach', 'Your intake answers, including any limitations or injuries you describe.'],
   prefs: ['A few preferences', 'Your unit, your language and which effort scale you log.'],
   // The last five only ever travel for a profile that has linked FitAI — the payload carries no

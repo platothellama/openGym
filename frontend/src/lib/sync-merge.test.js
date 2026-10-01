@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { keepReset, localExtras, mergeBodyweight, mergeResetIds, mergeStampedMap, mergeStates, newerOf, resetIdsOf, RESET_ID_MAX, sinceReset, stampCustomEx, stampRoutines, stampWorkout, unionById } from './sync-merge.js'
+import { keepReset, localExtras, mergeBodyweight, mergeMeasurements, mergeResetIds, mergeStampedMap, mergeStates, newerOf, resetIdsOf, RESET_ID_MAX, sinceReset, stampCustomEx, stampRoutines, stampWorkout, unionById } from './sync-merge.js'
 import { mergeImport } from './import-csv.js'
 import { convertBodyWeight, convertStateUnit, convertWeight } from './units.js'
 import { retimeWorkout } from './workout-date.js'
@@ -31,6 +31,55 @@ describe('newerOf / unionById / mergeBodyweight', () => {
   it('bodyweight: one entry per day, the later-edited one, sorted', () => {
     const out = mergeBodyweight([{ d: '2026-09-02', w: 80, t: 5 }], [{ d: '2026-09-01', w: 81, t: 1 }, { d: '2026-09-02', w: 79, t: 9 }])
     expect(out).toEqual([{ d: '2026-09-01', w: 81, t: 1 }, { d: '2026-09-02', w: 79, t: 9 }])
+  })
+})
+
+// Girths merge per SITE per day, not per entry: a phone in the gym and a tablet at home can each
+// have measured the same morning, and whichever site only one of them could see must survive.
+describe('mergeMeasurements', () => {
+  it('keeps both sites when two devices each measured a different one on the same day', () => {
+    const out = mergeMeasurements(
+      [{ d: '2026-09-01', t: 10, v: { waist: 82 } }],
+      [{ d: '2026-09-01', t: 20, v: { arm: 36 } }],
+    )
+    expect(out).toEqual([{ d: '2026-09-01', t: 20, v: { waist: 82, arm: 36 } }])
+  })
+
+  it('takes a shared site from whichever copy was edited later', () => {
+    const newer = mergeMeasurements(
+      [{ d: '2026-09-01', t: 20, v: { waist: 82 } }],
+      [{ d: '2026-09-01', t: 10, v: { waist: 85, arm: 36 } }],
+    )
+    expect(newer).toEqual([{ d: '2026-09-01', t: 20, v: { waist: 82, arm: 36 } }])
+    const older = mergeMeasurements(
+      [{ d: '2026-09-01', t: 10, v: { waist: 85, arm: 36 } }],
+      [{ d: '2026-09-01', t: 20, v: { waist: 82 } }],
+    )
+    expect(older).toEqual([{ d: '2026-09-01', t: 20, v: { waist: 82, arm: 36 } }])
+  })
+
+  it('unions days from both sides and sorts them', () => {
+    const out = mergeMeasurements(
+      [{ d: '2026-09-02', t: 1, v: { waist: 82 } }],
+      [{ d: '2026-08-01', t: 1, v: { waist: 85 } }],
+    )
+    expect(out.map(e => e.d)).toEqual(['2026-08-01', '2026-09-02'])
+  })
+
+  it('drops an entry with no sites, and neither copy is mutated', () => {
+    expect(mergeMeasurements([{ d: '2026-09-01', t: 1, v: {} }], [{ d: '2026-09-02', t: 1 }])).toEqual([])
+    expect(mergeMeasurements(null, undefined)).toEqual([])
+    const mine = [{ d: '2026-09-01', t: 1, v: { waist: 82 } }]
+    mergeMeasurements(mine, [{ d: '2026-09-01', t: 9, v: { arm: 36 } }])
+    expect(mine[0].v).toEqual({ waist: 82 })
+  })
+
+  it('is carried by mergeStates like the weigh-ins are', () => {
+    const m = mergeStates(
+      { bodyweight: [], measurements: [{ d: '2026-09-01', t: 10, v: { waist: 82 } }] },
+      { bodyweight: [], measurements: [{ d: '2026-09-01', t: 20, v: { arm: 36 } }] },
+    )
+    expect(m.measurements).toEqual([{ d: '2026-09-01', t: 20, v: { waist: 82, arm: 36 } }])
   })
 })
 

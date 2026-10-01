@@ -135,6 +135,36 @@ export function mergeBodyweight(a = [], b = []) {
   return [...byDay.values()].sort((x, y) => (x.d < y.d ? -1 : 1))
 }
 
+/**
+ * Girth measurements, merged **per site per day** rather than per day. A weigh-in is one number,
+ * so the later edit of a day simply is the day; a tape session is several independent numbers, and
+ * two devices measuring the same morning will each have filled in the sites the other left blank
+ * (a waist on the phone in the gym, an arm on the tablet at home). Taking one whole entry would
+ * drop whichever device's list was longer, and the site only one of them could see is the site
+ * that gets lost — so each site is taken from whichever copy's entry was edited last. The day's
+ * stamp is the later of the two, since that is the edit the result came from.
+ */
+export function mergeMeasurements(a = [], b = []) {
+  const byDay = new Map()
+  for (const e of [...list(a), ...list(b)]) {
+    if (!e || e.d == null || !e.v || typeof e.v !== 'object') continue
+    const t = Number(e.t) || 0
+    const cur = byDay.get(e.d)
+    if (!cur) { byDay.set(e.d, { d: e.d, t, v: { ...e.v } }); continue }
+    // The older copy is already in `cur`; fold this one over it site by site, keeping whichever
+    // site each copy is the newer one for and filling in the sites only this copy measured.
+    const newer = t > cur.t ? { t, v: { ...e.v, ...cur.v } } : { t: cur.t, v: { ...cur.v } }
+    for (const [id, cm] of Object.entries(e.v)) {
+      if (cm == null) continue
+      if (t > cur.t || !(id in cur.v)) newer.v[id] = cm
+    }
+    byDay.set(e.d, { d: e.d, t: newer.t, v: newer.v })
+  }
+  // A day whose sites all cancelled out (both copies had none, or the merge emptied it) is not a
+  // tape session — dropping it here keeps a blank row out of the history the sheet renders.
+  return [...byDay.values()].filter(e => Object.keys(e.v).length).sort((x, y) => (x.d < y.d ? -1 : 1))
+}
+
 // The kept load per exercise. "The larger one wins" held while the app only ever raised it —
 // but an assistance machine progresses downwards, so there the smaller number is the newer,
 // harder setting and taking the larger would hand back the help the other device just dropped
@@ -386,6 +416,7 @@ export function mergeStates(a0, b0, { prefer } = {}) {
     })
   }
   out.bodyweight = mergeBodyweight(n.bodyweight, o.bodyweight).map(clone)
+  out.measurements = mergeMeasurements(n.measurements, o.measurements).map(clone)
   if (list(n.favEx).length || list(o.favEx).length) out.favEx = [...new Set([...list(n.favEx), ...list(o.favEx)])]
   out.exWeights = clone(mergeExWeights(n.exWeights, o.exWeights))
   for (const [id, sources] of editedBy) {

@@ -499,6 +499,73 @@ function weighIns(S, from, to) {
     .filter(b => b.d && b.w !== undefined && (!from || b.d >= from) && (!to || b.d <= to));
 }
 
+/* Girth measurements. Copied site by site, never spread: S.measurements is the client's own state
+   and a new key on some future version must not reach a provider by accident. Always centimetres,
+   whatever meta.unit says — a girth is not a load (see S.measurements in store/useStore.js) — so
+   `unit` is stated here rather than left to be inferred from the profile's weight unit.
+
+   The changes are pre-computed rather than left to the model, and only past the noise floor the
+   app itself applies (NOISE_CM in lib/measurements.js). Sending raw series and asking for the
+   differences would invite a 0.4 cm tape wobble to be read as a plateau, and a deload to be
+   prescribed off it. `changed` is the only thing a rationale may cite; a site in `series` whose
+   change is under the floor is context, not evidence. */
+const GIRTH_SITES = ['neck', 'shoulder', 'chest', 'arm', 'waist', 'hip', 'thigh', 'calf'];
+// Below this a difference is what the tape reads differently this morning, not a change in the body.
+const GIRTH_NOISE_CM = 1;
+// A body is not a month-over-month photograph, and a series nobody keeps past a year is a person
+// who stopped measuring, not a history. Two years of monthly entries is 24 rows.
+const GIRTH_MAX_SESSIONS = 24;
+// Two tape readings days apart share every error the morning brings: you did not wake up taller, and
+// the tape did not get better. Past the noise floor but inside this window, a difference is still
+// not a trend, so nothing is offered as `change` until the series spans at least this long. This is
+// the app's own MIN_GAP_DAYS in lib/measurements.js, restated for the same reason as GIRTH_NOISE_CM.
+const GIRTH_MIN_GAP_DAYS = 28;
+function daysBetween(from, to) {
+  return Math.round((Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86400000);
+}
+function cleanMeasurements(S) {
+  const rows = list(S.measurements)
+    .map(e => {
+      const d = day(e?.d);
+      const v = e?.v && typeof e.v === 'object' && !Array.isArray(e.v) ? e.v : {};
+      const sites = {};
+      for (const id of GIRTH_SITES) {
+        const cm = num(v[id]);
+        if (cm !== undefined && cm > 0) sites[id] = Math.round(cm * 10) / 10;
+      }
+      return d && Object.keys(sites).length ? { d, sites } : null;
+    })
+    .filter(Boolean)
+    .sort((a, b) => (a.d < b.d ? -1 : 1));
+  if (!rows.length) return null;
+  const recent = rows.slice(-GIRTH_MAX_SESSIONS);
+  const first = recent[0], last = recent[recent.length - 1];
+  // The whole window is the baseline, not the nearest pair: a series read end to end is the only
+  // way a site measured once and left alone still counts, and the gap check below is what keeps a
+  // two-row week from being read as a fortnight of change.
+  const change = {};
+  if (daysBetween(first.d, last.d) >= GIRTH_MIN_GAP_DAYS) {
+    for (const id of GIRTH_SITES) {
+      const a = first.sites[id], b = last.sites[id];
+      if (!(a > 0) || !(b > 0) || a === b) continue;
+      const d = Math.round((b - a) * 10) / 10;
+      // The app's own floor, restated: only a difference past it is offered as `changed`, so nothing
+      // downstream has to know how big a tape's error is to avoid treating it as a trend.
+      if (Math.abs(d) >= GIRTH_NOISE_CM) change[id] = d;
+    }
+  }
+  return {
+    unit: 'cm',
+    from: first.d,
+    to: last.d,
+    days: daysBetween(first.d, last.d),
+    sessions: recent.length,
+    latest: last.sites,
+    ...(Object.keys(change).length ? { change } : {}),
+    series: recent
+  };
+}
+
 /* The room's medians are computed on this server, but from other people's synced workouts —
    state their own clients wrote. cohort.js keeps only catalogue exercises; this copy bounds
    every field again, so what reaches one person's prompt never depends on that filter alone. */
@@ -859,6 +926,16 @@ export function build(S, opts = {}) {
   // debrief and a session job all read the same seven-day window, so the block is built once
   // here and is identical for each of them. Unlinked, none of the keys exist at all.
   if (opts.fitai && typeof opts.fitai === 'object') Object.assign(p, cleanFitai(opts.fitai));
+  // Girths ride along with a review, a debrief and a plan change — the three jobs that write a
+  // rationale and can therefore cite them — and never with a session job. A `session` job tunes
+  // today's targets, and today's targets come from the logged sets, not from a tape: nothing here
+  // may reach that output. Same shape as the fuel block above: a person who has never measured
+  // gets no key at all, so an untouched profile's payload is byte-identical to a build from before
+  // this existed.
+  if (opts.kind !== 'session') {
+    const girth = cleanMeasurements(S);
+    if (girth) p.measurements = girth;
+  }
   if (opts.kind !== 'debrief' && opts.kind !== 'session') {
     const said = conversation(coach, [opts.note, opts.refine]);
     if (said.length) p.conversation = said;
