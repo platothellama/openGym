@@ -119,6 +119,37 @@ if (kind === 'debrief') {
   });
 }
 
+// session: today's targets, echoing the app's own prescription back with a sentence attached.
+// The whole point of the fixture on this path is that it exercises the loop, not that it coaches:
+// a test wants targets that are already inside the validator's bounds and named after real ids,
+// so the answer is `base` with `why` filled in. When a `fuel` block arrived it is named in the
+// wording, which is how a test sees that the client-supplied FitAI window reached the provider.
+if (kind === 'session') {
+  const ex = (P.routine?.ex || []).slice(0, 20);
+  const base = P.base || {};
+  const act = P.activity || {};
+  const sleep = act.sleepAvgH ?? null;
+  const nights = act.sleepNights ?? 0;
+  const read = sleep != null ? ` and ${sleep}h of sleep across ${nights} night(s)` : '';
+  out({
+    coach_contract: 1,
+    summary: ex.length
+      ? `Tuned ${ex.length} exercise(s) against the last few sessions${read}.`
+      : 'Nothing to tune.',
+    targets: ex.map(e => {
+      const b = base[e.id] || {};
+      const t = {
+        id: e.id,
+        why: b.kind === 'hold'
+          ? `Held where it is — ${sleep != null ? `${sleep}h average sleep, and` : ''} the last session missed, so the next one repeats before it climbs.`
+          : `Kept the app's ${b.kind || 'base'} prescription; nothing in the recovery signals${read} argued for a change.`
+      };
+      for (const k of ['weight', 'reps', 'sec', 'restSec', 'sets']) if (b[k] !== undefined) t[k] = b[k];
+      return t;
+    })
+  });
+}
+
 // review
 const routine = (P.plan?.routines || [])[0];
 const first = routine?.ex?.[0];

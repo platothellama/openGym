@@ -14,7 +14,9 @@ import { fileURLToPath } from 'node:url';
 
 const API = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
 const ROOT = path.join(API, '..');
-const read = f => fs.readFileSync(f, 'utf8');
+// Normalised to LF: this repo has no .gitattributes and Windows checkouts carry CRLF, which
+// turns the `\n  /path:\n` lookups below into misses that have nothing to do with the spec.
+const read = f => fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n');
 const spec = read(path.join(API, 'openapi.yaml'));
 
 /** Every `'GET /api/x': async (req, res)` key in the route table. */

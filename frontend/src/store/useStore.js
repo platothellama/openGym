@@ -185,6 +185,18 @@ export const DEF = {
   // cleared) replaces that role's curated exercise-id whitelist with a single user-chosen
   // exercise id; the stamp is what lets a sync keep the choice made last (lib/sync-merge.js).
   balanceTemplate: DEFAULT_TEMPLATE_ID, balanceOverrides: {},
+  // The active training system (lib/training-systems.js, lib/muscle-ledger.js). A profile with no
+  // `trainSystem` reads as 'off' (systemOf), so every profile written before this existed behaves
+  // exactly as it did: its own routines and exercises decide every weight. A named system is only a
+  // fallback layer — an exercise or routine that names its own policy still wins.
+  trainSystem: 'off',
+  // Whether the muscle ledger may change today's set count by one (lib/muscle-ledger.js). Off by
+  // design: the ledger holds and deloads load on its own, and moving sets is opt-in on top of that.
+  // Absent reads as off.
+  muscleAutoSets: false,
+  // Whether the recovery model's fatigue may hold a lift on its own, with no system on and so no
+  // weekly cap to judge against. Off by default; absent reads as off.
+  readinessAuto: false,
 }
 const clone = o => JSON.parse(JSON.stringify(o))
 

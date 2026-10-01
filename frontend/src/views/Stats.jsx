@@ -13,6 +13,7 @@ import Icon from '../components/Icon.jsx'
 import BodyMap, { BodyMapLegend } from '../components/BodyMap.jsx'
 import { loadOfWorkouts, muscleBalanceWindow, rankOf, MUSCLE_NAME, musclesOf } from '../lib/muscles.js'
 import { fatigueOf, strengthOf, STRENGTH_FLOOR, LB_TO_KG } from '../lib/recovery.js'
+import { ledgerSummary, ledgerWhy } from '../lib/muscle-ledger.js'
 import { strengthExerciseRowsForMuscle } from '../lib/strength-exercises.js'
 import { fatigueStateOf } from '../lib/recovery-view.js'
 import { e1rmSeries, best1RM } from '../lib/onerm.js'
@@ -24,7 +25,7 @@ import { Button, Segmented, SelectRow } from '../components/ui.jsx'
 import { tappable } from '../lib/use-sheet-keyboard.js'
 import { isWarmupRow } from '../lib/workout-model.js'
 import { getFitaiSummary, fuelLineText } from '../lib/fitai.js'
-import { fuelReadiness } from '../lib/coach-insights.js'
+import { fuelReadiness, fuelLineOf } from '../lib/coach-insights.js'
 
 // Which muscles the training in a window actually hit — and, the point of the card,
 // which ones it keeps missing. Shading is relative within the window (lib/muscles.js).
@@ -142,6 +143,10 @@ function MuscleBalance({ S }) {
   const top = worked.slice(0, 4)
   const max = worked.length ? load[worked[0]] : 0
   const sets = m => fmtNum(Math.round((load[m] || 0) * 10) / 10)
+  // The weekly ledger: why a weight was held or given back this week. Only shown with a system
+  // on, because without one there is no cap to be over — the balance map above is the whole story.
+  const ledger = useMemo(() => ledgerSummary(S, now, { bodyweightKg, unit: S.unit }), [S, now, bodyweightKg, S.unit])
+  const gated = ledger.rows.filter(r => r.state === 'over' || r.state === 'near' || r.state === 'fatigued')
   // FitAI fuel note for the Fatigue view: same readiness read as the Home fuel
   // card, but worded from the week's numbers (deficit first, then protein, then
   // the acute fast flag). Unlinked profiles never ask; fueled/unknown weeks stay quiet.
@@ -155,13 +160,9 @@ function MuscleBalance({ S }) {
   }, [fitaiUserId])
   const fuelNote = (() => {
     if (!fitaiUserId || !fitSummary) return null
-    const ready = fuelReadiness(fitSummary)
-    if (ready.state !== 'low' && ready.state !== 'fasted') return null
-    const nut = fitSummary.nutrition || {}
-    if (nut.deficitVsTarget > 0) return fuelLineText({ kind: 'deficit', kcal: nut.deficitVsTarget })
-    if (nut.proteinVsTarget > 0) return fuelLineText({ kind: 'protein', grams: nut.proteinVsTarget })
-    if (ready.lines?.length) return fuelLineText(ready.lines[0])
-    return null
+    if (fuelReadiness(fitSummary).state !== 'low' && fuelReadiness(fitSummary).state !== 'fasted') return null
+    const line = fuelLineOf(fitSummary)
+    return line ? fuelLineText(line) : null
   })()
 
   return <div className="card">
@@ -197,6 +198,22 @@ function MuscleBalance({ S }) {
             ? t('Every muscle group got at least one hard set in this period.')
             : t('Every muscle group got some work in this period.')}</div>}
       </> : <div className="muted small">{t('No workouts in this period yet.')}</div>}
+      {/* Read off the ledger's own horizon, not the window above: this is about the week being
+          trained right now, and a profile with an empty window still has a week. */}
+      {ledger.on && <>
+        {/* The same sentence the workout card shows when it holds a weight, so a held week can be
+            read here instead of being a mystery until the next session. */}
+        <h4 className="sec" style={{ marginTop: 12 }}>{t('Weekly targets')}</h4>
+        {gated.length ? gated.map(r => <div key={r.slug} className="mrow" style={{ alignItems: 'stretch' }}>
+          <span className="nm" style={{ whiteSpace: 'normal', lineHeight: 1.35, display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <span style={{ display: 'block' }}>{t(MUSCLE_NAME[r.slug])}</span>
+            <span className="small dim" style={{ display: 'block', fontWeight: 400 }}>{t(...ledgerWhy(r))}</span>
+          </span>
+          <span className="v" style={{ alignSelf: 'center', whiteSpace: 'nowrap' }}>
+            {fmtNum(r.weekHard)}<span className="dim">/{fmtNum(r.target ?? 0)}</span>
+          </span>
+        </div>) : <div className="muted small">{t('Nothing is over its weekly target this week.')}</div>}
+      </>}
     </> : view === 'fatigue' ? <>
       <h2>{t('Fatigue')}</h2>
       <BodyMap className="tappable hm-fatigue" load={fatigue} thresholds={FATIGUE_LEVELS} body={S.body} selected={sel} onMuscle={toggleSel} />

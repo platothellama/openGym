@@ -14,6 +14,7 @@
 
 import { EXIDX } from './exercises.js'
 import { modeOf, isBw, isPerSide, cleanupSg } from './history.js'
+import { applySessionTargets as applyTargets } from './session-suggest.js'
 import { uid, todayISO, DAYN } from './format.js'
 import { mergePlan } from './plan-share.js'
 import { deleteRoutine } from './routines.js'
@@ -69,7 +70,15 @@ export const CATEGORY_TEXT = {
   training: ['Your logged training', 'Sets you logged in the review window — weights, reps, times, effort ratings and how long sessions took.'],
   bodyweight: ['Body weight', 'Weigh-ins from the same window, and your goal weight if you set one.'],
   profile: ['What you tell the Coach', 'Your intake answers, including any limitations or injuries you describe.'],
-  prefs: ['A few preferences', 'Your unit, your language and which effort scale you log.']
+  prefs: ['A few preferences', 'Your unit, your language and which effort scale you log.'],
+  // The last five only ever travel for a profile that has linked FitAI — the payload carries no
+  // fuel block at all without one, so the wording says "only if you linked FitAI" rather than
+  // letting the row imply these are always sent.
+  nutrition: ['Your food and drink', 'Only if you linked FitAI: your calorie and protein targets, and what you logged eating this week.'],
+  glucose: ['Your blood sugar', 'Only if you linked FitAI: fasting and after-meal readings from this week.'],
+  fasting: ['Your fasts', 'Only if you linked FitAI: the fasting protocols you started and finished, and any one in progress.'],
+  health: ['Your health data', 'Only if you linked FitAI: your body weight and scan, lab results that were out of range, and any condition you recorded.'],
+  activity: ['Your daily activity', 'Only if you linked FitAI: steps, active calories, sleep and resting heart rate.']
 }
 export const hasConsent = S => !!S?.coach?.consent?.agreedAt && S.coach.consent.version === CONSENT_VERSION
 
@@ -316,8 +325,14 @@ export function pushSnapshot(s, proposalId, label) {
  */
 export function revertLast(s) {
   const c = coachOf(s)
-  const snap = (c.snapshots || []).pop()
-  if (!snap) return false
+  // The ring is shared with a session apply (see `pushActiveSnapshot`): that snapshot has `active`
+  // and no `routines` in it. Step over those rather than restoring a plan out of one, which
+  // would empty the plan rather than undo anything.
+  const snaps = c.snapshots || []
+  const at = snaps.map((sn, i) => (sn && !sn.active && sn.routines ? i : -1)).filter(i => i >= 0).pop()
+  if (at == null) return false
+  const snap = snaps[at]
+  c.snapshots = snaps.filter((_, i) => i !== at)
   s.routines = clone(snap.routines)
   s.week = clone(snap.week)
   s.weekOptional = clone(snap.weekOptional || [])
@@ -327,7 +342,7 @@ export function revertLast(s) {
   appendLog(s, { kind: 'revert', at: Date.now(), proposalId: snap.proposalId, summary: t('Reverted the last Coach changes.') })
   return true
 }
-export const canRevert = S => !!(S?.coach?.snapshots || []).length
+export const canRevert = S => (S?.coach?.snapshots || []).some(sn => sn && !sn.active && sn.routines)
 
 /* ============================ the log ============================ */
 
@@ -655,6 +670,207 @@ export function recordDebrief(s, proposal) {
     highlights: proposal.highlights || [], watch: proposal.watch || [], nextTime: proposal.nextTime || []
   })
 }
+
+/* ============================ today's targets (a `session` job) ============================
+ *
+ * The other three kinds write to the plan, which is a draft that can be snapshotted whole. This
+ * one writes into a workout that is already open and already has sets in it, so it gets its own
+ * rules rather than being forced through `applyChangeSet`:
+ *
+ *   - The bounds are re-applied here. The server checked them too, but the answer has already
+ *     crossed a network and a phone may have answered it locally; this is the last gate before a
+ *     number a language model produced is written onto a barbell. `coach-parity.test.js` pins
+ *     this table against the server's so the two copies cannot drift.
+ *   - A target is checked against *this* session's entries rather than the routine it was sent
+ *     for: an exercise can be added, swapped or removed while a job is running, and a target
+ *     naming an exercise that is not on the screen has nowhere to go.
+ *   - Reverting restores exactly what was replaced, per entry, and only for the session it was
+ *     applied to. A plan snapshot holds routines and the week — copying that per session would
+ *     be both expensive and the wrong unit — and a session apply has to survive the person
+ *     logging a set afterwards, which is why the rows are restored one by one rather than by
+ *     swapping the whole array back.
+ */
+
+/** The prompt's bounds (api/coach/prompts/session.md) and the server's mirror of them. */
+export const SESSION_TARGET_BOUNDS = Object.freeze({
+  weight: [0, 1000], reps: [1, 100], sets: [1, 10], sec: [5, 3600],
+})
+export const SESSION_REST_MIN = 15
+export const SESSION_REST_MAX = 300
+export const SESSION_TARGET_MAX = 20
+
+const inBounds = (v, [lo, hi]) => Number.isFinite(v) && v >= lo && v <= hi
+const whole = (v, lo, hi) => Number.isInteger(v) && v >= lo && v <= hi
+
+/**
+ * Turn a session proposal into the keyed targets `applySessionTargets` takes.
+ *
+ * Returns `{ targets, dropped }`: what would change, and what was asked for and will not be.
+ * A refusal throws, the same way `validateProposal` does — an id naming an exercise that is not
+ * on the screen means the answer is about a different session than the one running, and writing
+ * the rest of it anyway would be writing numbers into a workout nobody asked about.
+ *
+ * Dropped rather than refused: a suggestion that changes nothing (the numbers are already what
+ * the app had), and an invented load on a bodyweight exercise that carries none. Both are the
+ * model saying something the app must not act on, not a reason to throw the other 19 away.
+ */
+export function validateSessionTargets(proposal, entries) {
+  if (!proposal || typeof proposal !== 'object' || !Array.isArray(proposal.targets)) throw new Error(t('That proposal can’t be read.'))
+  const byId = new Map((entries || []).filter(e => e && e.id).map(e => [e.id, e]))
+  const dropped = []
+  const targets = {}
+  const seen = new Set()
+  if (proposal.targets.length > SESSION_TARGET_MAX) throw new Error(t('That proposal can’t be read.'))
+
+  for (const raw of proposal.targets) {
+    if (!raw || typeof raw !== 'object' || typeof raw.id !== 'string') throw new Error(t('That proposal can’t be read.'))
+    const entry = byId.get(raw.id)
+    if (!entry) throw new Error(t('That proposal can’t be read.'))
+    if (seen.has(raw.id)) throw new Error(t('That proposal can’t be read.'))
+    seen.add(raw.id)
+    if (!raw.why || typeof raw.why !== 'string') throw new Error(t('That proposal can’t be read.'))
+
+    const cur = entry.target || {}
+    const t2 = { why: raw.why }
+    const bad = []
+    for (const key of Object.keys(SESSION_TARGET_BOUNDS)) {
+      const v = raw[key]
+      if (v == null) continue
+      // A number, not something that reads as one, and whole where the app counts whole things —
+      // the same test the server applies (validate.js), because a rounded 10.5 reps is a rep
+      // nobody did. This is the last gate before a barbell, so an answer the server would have
+      // refused is refused here too rather than half-applied.
+      const [lo, hi] = SESSION_TARGET_BOUNDS[key]
+      const ok = typeof v === 'number' && (key === 'weight' ? inBounds(v, [lo, hi]) : whole(v, lo, hi))
+      if (ok) t2[key] = v
+      else bad.push(key)
+    }
+    if (raw.restSec != null) {
+      // 0 is a real answer (no rest at all) and 15-300 is the range; anything between is a number
+      // that was never a rest period.
+      if (whole(raw.restSec, SESSION_REST_MIN, SESSION_REST_MAX) || raw.restSec === 0) t2.restSec = raw.restSec
+      else bad.push('restSec')
+    }
+    if (bad.length) throw new Error(t('That proposal can’t be read.'))
+    // A per-side exercise's reps are the total across both sides, so an odd one would put a rep on
+    // one side and not the other. Read off the entry, never off the answer.
+    if (t2.reps != null && isPerSide(cur) && t2.reps % 2) throw new Error(t('That proposal can’t be read.'))
+    // Bodyweight work progresses in reps and sets. A load on an exercise that carries none is not
+    // a conservative adjustment, it is a different exercise — but the rest of the answer is still
+    // about this session, so that one field goes and the rep climb with it stands.
+    if (t2.weight != null && isBw(cur) && !(Number(cur.weight) > 0)) {
+      delete t2.weight
+      dropped.push({ id: raw.id, field: 'weight' })
+    }
+    // Cardio numbers are bounds the prompt states and the app cannot act on: a session's min and
+    // speed come from the exercise, not from a suggestion. Said out loud rather than ignored.
+    const fixed = ['min', 'speed'].filter(k => raw[k] != null)
+    if (fixed.length) dropped.push({ id: raw.id, fields: fixed })
+
+    // A target whose numbers are the ones already on the entry is not a change. Left in, the
+    // card would offer to apply a row that reads the same either side of the arrow.
+    const changed = Object.keys(SESSION_TARGET_BOUNDS).some(k => t2[k] != null && t2[k] !== cur[k]) || (t2.restSec != null && t2.restSec !== cur.restSec)
+    if (!changed) { dropped.push({ id: raw.id, unchanged: true }); continue }
+    targets[raw.id] = t2
+  }
+  return { targets, dropped }
+}
+
+/**
+ * Write today's targets into the open session, remembering exactly what they replaced.
+ *
+ * Pure over the draft `s`, like everything else here: call it inside `store.update`, and a throw
+ * leaves the session untouched because the store only keeps a clone that returns normally.
+ * Returns `{ applied, targets, dropped, sessionId }`, and `{ applied: 0 }` when the answer held
+ * nothing the app could act on — nothing written, and nothing to undo.
+ */
+export function applySessionProposal(s, proposal, entries) {
+  const live = entries || s.active?.entries || null
+  if (!live) throw new Error(t('That proposal can’t be read.'))
+  const { targets, dropped } = validateSessionTargets(proposal, live)
+  const ids = Object.keys(targets)
+  if (!ids.length) return { applied: 0, targets, dropped, sessionId: s.active?.id || null }
+
+  // The session's own unit of undo: the affected entries only, before they were touched. Bound
+  // by the same ring as a plan snapshot, so the newest three are kept and an older one ages out.
+  pushActiveSnapshot(s, s.active?.id || null, proposal.id, ids, live)
+
+  const next = applyTargets(live, targets)
+  if (s.active?.entries === live) s.active.entries = next
+  const logId = appendLog(s, {
+    kind: 'session', at: Date.now(), proposalId: proposal.id,
+    summary: proposal.summary || '', ids, skipped: dropped
+  })
+  return { applied: ids.length, targets, dropped, logId, sessionId: s.active?.id || null }
+}
+
+/** Remember the entries a session apply is about to change. See `revertSessionTargets`. */
+export function pushActiveSnapshot(s, sessionId, proposalId, ids, entries) {
+  const c = coachOf(s)
+  const restore = (entries || [])
+    .filter(e => e && ids.includes(e.id))
+    .map(e => ({ id: e.id, target: clone(e.target || {}), sets: clone(e.sets || []), ...(e.suggestion ? { suggestion: clone(e.suggestion) } : {}) }))
+  if (!restore.length) return
+  c.snapshots = [...(c.snapshots || []), {
+    at: Date.now(), proposalId: proposalId || null, label: t('Before the Coach’s targets'),
+    // A plan snapshot has `routines` and no `active`; a session snapshot is the other way round.
+    // Which one it is decides what revert puts back, so the two can share the ring.
+    active: { sessionId: sessionId || null, entries: restore }
+  }].slice(-SNAPSHOT_MAX)
+  trim(s)
+}
+
+/**
+ * Put back exactly what a session apply changed — for this session, and no further.
+ *
+ * Per row rather than per array: a set logged between applying and undoing is what happened, and
+ * replacing the array would delete it. So a row that is still undone goes back to the value it
+ * had before the apply, a row that has since been logged is left exactly as it is, and a row the
+ * apply appended is removed only while it is still undone. `target` and `suggestion` are whole
+ * values and are restored outright.
+ *
+ * Returns false when there is nothing of this session's to undo, which is the honest answer
+ * after the workout has been finished or the ring has rolled on.
+ */
+export function revertSessionTargets(s, sessionId) {
+  const c = coachOf(s)
+  const live = s.active?.entries
+  if (!sessionId || !Array.isArray(live)) return false
+  const idx = (c.snapshots || []).map((sn, i) => (sn?.active ? i : -1)).filter(i => i >= 0).reverse()
+    .find(i => (c.snapshots[i].active.sessionId || null) === sessionId)
+  if (idx == null) return false
+  const snap = c.snapshots[idx]
+  c.snapshots = c.snapshots.filter((_, i) => i !== idx)
+
+  let restored = 0
+  for (const rec of snap.active.entries || []) {
+    const at = live.findIndex(e => e && e.id === rec.id)
+    if (at < 0) continue
+    const entry = live[at]
+    entry.target = clone(rec.target || {})
+    const rows = Array.isArray(entry.sets) ? entry.sets : []
+    const pre = rec.sets || []
+    for (let i = 0; i < pre.length && i < rows.length; i++) {
+      if (rows[i]?.done) continue
+      rows[i] = clone(pre[i])
+    }
+    // The rows the apply appended, outermost first, so an index shift never skips one. A row
+    // logged since is not removed: it has become a set that was actually done.
+    for (let i = rows.length - 1; i >= pre.length; i--) {
+      if (rows[i]?.done) continue
+      rows.splice(i, 1)
+    }
+    if (rec.suggestion) entry.suggestion = clone(rec.suggestion)
+    else delete entry.suggestion
+    restored++
+  }
+  appendLog(s, { kind: 'revert', at: Date.now(), proposalId: snap.proposalId, scope: 'session', restored })
+  return restored > 0
+}
+
+/** Whether this session has a Coach apply it could take back. */
+export const canRevertSession = (S, sessionId) =>
+  !!(sessionId && (S?.active?.entries) && (S?.coach?.snapshots || []).some(sn => sn?.active && (sn.active.sessionId || null) === sessionId))
 
 /* ============================ display helpers ============================ */
 

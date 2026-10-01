@@ -515,6 +515,202 @@ function cleanCohort(c) {
   };
 }
 
+/* ---------- the FitAI fuel block: the last five consent categories ----------
+   The bridge is another service. It hands us whatever FitAI returned and we do not own its
+   shape, so every field below is copied in by name like the rest of this file — nothing is
+   spread, nothing is passed through. A new column on FitAI's side must not reach the
+   provider by accident, and the two fields that must never ride along are named in the test
+   that guards this: its `user_id` (the payload carries the opaque handle instead) and its
+   `profile` block (the intake answers are already in `coachProfile`, and a second copy would
+   be a second source of truth).
+
+   Five flat top-level keys, named exactly as the consent screen names them, so what the
+   screen promises and what the payload carries are the same five words. Someone with no
+   FitAI link gets none of them, which leaves an unlinked payload byte-identical to a build
+   from before any of this existed — test/payload-fitai.test.js asserts that too.
+
+   The bridge's own `window` deliberately does not travel. `p.window` is already the
+   *training* window for a review, and the fuel block dates its own rows against `meta.today`,
+   so a second range would only invite the model to conflate the two. */
+const FITAI_TARGETS = ['calories', 'protein', 'carbs', 'fat', 'tdee'];
+// A measurement is a number. Unlike the state fields above, nothing here is a hand-made import
+// that wrote "1497" for 1497: this is JSON from a service that owns the type, so a value that
+// arrives as a string reads as absent rather than travelling as a string.
+const metric = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+// How much of the window may travel. The window is seven days; 14 leaves room for a bridge
+// that counts differently, and 20 rows is a lab panel, not a history.
+const FITAI_MAX_DAYS = 14;
+const FITAI_MAX_ROWS = 20;
+const obj = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {});
+function cleanFitai(f) {
+  const tgt = obj(f.targets);
+  const nut = obj(f.nutrition);
+  const glu = obj(f.glucose);
+  const fst = obj(f.fasting);
+  const body = obj(f.body);
+  const labs = obj(f.labs);
+  const act = obj(f.activity);
+  const started = obj(fst.active);
+  const latest = obj(glu.latest);
+  const scan = obj(body.scan);
+  const at = day(latest.date);
+  const protocol = word(started.protocol, 24);
+  return {
+    nutrition: {
+      // Every target key is always present, null when the bridge has no number for it, so the
+      // prompt can name the field without guarding on whether this account set it.
+      targets: Object.fromEntries(FITAI_TARGETS.map(k => [k, metric(tgt[k])])),
+      daysLogged: count(nut.daysLogged, 0, FITAI_MAX_DAYS),
+      kcalAvg: metric(nut.kcalAvg),
+      proteinAvg: metric(nut.proteinAvg),
+      deficitVsTarget: metric(nut.deficitVsTarget),
+      proteinVsTarget: metric(nut.proteinVsTarget),
+      // A day with no usable date cannot be placed against the rest of the window, so it is
+      // dropped rather than shown as an orphan row; the numbers on a kept day are read as
+      // given, and a missing one stays null rather than being invented.
+      days: list(nut.days).filter(d => d && typeof d === 'object' && day(d.date)).slice(0, FITAI_MAX_DAYS)
+        .map(d => ({ date: day(d.date), kcal: metric(d.kcal), protein: metric(d.protein) }))
+    },
+    glucose: {
+      n: count(glu.n, 0, 1000),
+      fastingAvg: metric(glu.fastingAvg),
+      postMealAvg: metric(glu.postMealAvg),
+      max: metric(glu.max),
+      // `meal_context` is the bridge's name for what the prompts call `meal`. An undated
+      // reading reads as absent: "the latest reading" with no day is not a reading.
+      latest: at ? { date: at, value: metric(latest.value), meal: word(latest.meal_context, 24) } : null
+    },
+    fasting: {
+      sessions: count(fst.sessions, 0, 1000),
+      completed: count(fst.completed, 0, 1000),
+      // A fast in progress is one of the few things here worth naming exactly — "trained
+      // fasted" is a real reason to hold a jump — so the protocol and when it started, and
+      // nothing else the bridge knows about the fast.
+      active: protocol ? { protocol, startedAt: word(started.startedAt, 40) } : null
+    },
+    health: {
+      weightKg: metric(body.weightKg),
+      conditions: list(f.conditions).filter(c => c && typeof c === 'object').slice(0, FITAI_MAX_ROWS)
+        .map(c => ({ label: word(c.label, NAME_MAX), code: word(c.code, 40), status: word(c.status, 20) })),
+      // Flat, because the only thing a session decision can use is "these were out of range",
+      // and the count of the ones that were fine (labsOk) is what keeps that from reading as
+      // a crisis on its own.
+      labs: list(labs.abnormal).filter(r => r && typeof r === 'object').slice(0, FITAI_MAX_ROWS)
+        .map(r => ({ key: word(r.key, 40), value: metric(r.value), unit: word(r.unit, 16), flag: word(r.flag, 20) })),
+      labsOk: count(labs.normalCount, 0, 1000),
+      // The scan's own fields are the app's, not the bridge's: body-fat percentage and lean
+      // mass are what a session decision could use, and nothing else on the scan travels.
+      scan: (scan.at || scan.bodyFatPct || scan.leanKg)
+        ? { at: word(scan.at, 30), bodyFatPct: metric(scan.bodyFatPct), leanKg: metric(scan.leanKg), type: word(scan.type, 24) }
+        : null
+    },
+    activity: {
+      stepsAvg: metric(act.stepsAvg),
+      stepsDays: count(act.stepsDays, 0, FITAI_MAX_DAYS),
+      activeKcalTotal: metric(act.activeKcalTotal),
+      sleepAvgH: metric(act.sleepAvgH),
+      sleepNights: count(act.sleepNights, 0, FITAI_MAX_DAYS),
+      restingHrAvg: metric(act.restingHrAvg),
+      restingHrDays: count(act.restingHrDays, 0, FITAI_MAX_DAYS),
+      hrAvg: metric(act.hrAvg)
+    }
+  };
+}
+
+/* ---------- one session being tuned, for a `session` job ----------
+   The one task where the model does set day-to-day loads, so the block it reads has to be the
+   session rather than the plan: the routine about to be trained, the last few times each of its
+   exercises was trained, and the app's own deterministic prescription.
+
+   All three arrive from the client, not from here. `core/` is framework-free and shares no build
+   step with the app, and the prescription itself *is* the app's progression engine
+   (frontend/src/lib/progression.js) — there is nothing on this side that could recompute it, so
+   a server that derived `base` itself would be inventing it. Everything is therefore allowlisted
+   here exactly like the rest of the file: the app writes these from client state, and a field
+   this module does not name must not reach the provider.
+
+   `yesterday` and `today` are the FitAI bridge's single-day blocks. The seven-day window the
+   review and the session both read is the fuel block above; these two are what "trained fasted"
+   and "slept four hours" actually rest on, and the window averages do not carry it. */
+const SESSION_MAX_EX = 20;
+const SESSION_HISTORY_PER_EX = 5;
+// The prescription's own vocabulary (frontend/src/lib/progression.js). Anything else is not a
+// prescription kind, and a kind the app does not have cannot be reasoned about.
+const SESSION_KINDS = ['first', 'up', 'hold', 'deload', 'off'];
+
+function cleanSessionEx(e) {
+  // cleanEx already reduces an exercise to the fields that decide whether it has changed, mode
+  // aware; the one thing session.md also asks for is the rest the plan gives this exercise.
+  const o = cleanEx(e);
+  const rest = num(e.restSec ?? e.rest);
+  if (rest !== undefined) o.restSec = rest;
+  return o;
+}
+function cleanSessionRoutine(r) {
+  if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+  return {
+    id: ident(r.id),
+    name: r.name == null ? r.name : text(String(r.name), NAME_MAX),
+    ...(policy(r.prog) ? { prog: r.prog } : {}),
+    ex: list(r.ex).filter(e => e && typeof e === 'object').slice(0, SESSION_MAX_EX).map(cleanSessionEx)
+  };
+}
+/** Last few times each exercise was trained, oldest-first, as the prompt reads them. */
+function cleanSessionHistory(h) {
+  const pairs = [];
+  if (!h || typeof h !== 'object' || Array.isArray(h)) return pairs;
+  for (const [id, sessions] of Object.entries(h)) {
+    if (pairs.length >= SESSION_MAX_EX) break;
+    const exId = ident(id);
+    if (!exId || !Array.isArray(sessions)) continue;
+    const rows = sessions
+      .filter(s => s && typeof s === 'object' && day(s.d))
+      .slice(-SESSION_HISTORY_PER_EX)
+      .map(s => ({
+        d: day(s.d),
+        ...(word(s.summary, 60) ? { summary: word(s.summary, 60) } : {}),
+        ...(num(s.weight) !== undefined ? { weight: num(s.weight) } : {}),
+        ...(num(s.reps) !== undefined ? { reps: num(s.reps) } : {})
+      }))
+      .filter(r => r.summary !== undefined || r.weight !== undefined || r.reps !== undefined);
+    if (rows.length) pairs.push([exId, rows]);
+  }
+  return pairs;
+}
+/** The app's prescription per exercise. The model treats it as the default, not as a suggestion. */
+function cleanSessionBase(b) {
+  const pairs = [];
+  if (b && typeof b === 'object' && !Array.isArray(b)) {
+    for (const [id, t] of Object.entries(b)) {
+      if (pairs.length >= SESSION_MAX_EX) break;
+      const exId = ident(id);
+      if (!exId || !t || typeof t !== 'object') continue;
+      const clean = {};
+      for (const k of ['weight', 'reps', 'sets', 'sec', 'restSec']) if (num(t[k]) !== undefined) clean[k] = num(t[k]);
+      if (SESSION_KINDS.includes(t.kind)) clean.kind = t.kind;
+      pairs.push([exId, clean]);
+    }
+  }
+  return pairs;
+}
+// `Object.fromEntries`, not assignment into a literal: a JSON body may carry a key called
+// `__proto__`, and assigning it on a plain object is a prototype write rather than a field.
+const keyed = pairs => Object.fromEntries(pairs);
+
+/** One FitAI day, for the `yesterday`/`today` blocks. */
+function cleanFitaiDay(d) {
+  const o = obj(d);
+  const at = day(o.date);
+  if (!at) return null;
+  const out = { date: at };
+  for (const k of ['kcal', 'protein', 'carbs', 'fat', 'sleepH', 'restingHr', 'steps', 'activeKcal']) {
+    const v = metric(o[k]);
+    if (v !== null) out[k] = v;
+  }
+  if (word(o.fasting, 24)) out.fasting = word(o.fasting, 24);
+  return out;
+}
+
 /* ---------- one workout, for a debrief ---------- */
 export function findWorkout(S, workoutId) {
   const all = (S.workouts || []).filter(w => w && w.d);
@@ -543,7 +739,12 @@ export function workoutMeta(S, workoutId) {
  * Build a job payload.
  *
  * @param {object} S      the profile's synced state
- * @param {object} opts   { handle, kind, intake?, note?, refine?, previous?, workoutId?, cohort?, lang? }
+ * @param {object} opts   { handle, kind, intake?, note?, refine?, previous?, workoutId?, cohort?, lang?,
+ *                          session?, fitai? }
+ *
+ * `session` is `{ routine, history, base, yesterday, today }` and is only read for
+ * `kind: 'session'` — the block the app sends with the session it is about to train (see the
+ * cleaners above). `fitai` is the bridge's seven-day summary, added for every kind.
  *
  * `handle` is the opaque per-profile pseudonym the payload carries instead of a uid. It is
  * supplied rather than derived because the two runtimes mint it differently: the server keys
@@ -556,7 +757,7 @@ export function build(S, opts = {}) {
   const profile = opts.intake || coach.profile || null;
   const p = {
     coach_contract: CONTRACT,
-    task: opts.kind === 'review' ? 'review' : opts.kind === 'debrief' ? 'debrief' : 'create',
+    task: opts.kind === 'review' ? 'review' : opts.kind === 'debrief' ? 'debrief' : opts.kind === 'session' ? 'session' : 'create',
     meta: {
       profile: opts.handle,
       // Both are short codes in any real state; cut anyway, since the state is the client's.
@@ -620,6 +821,16 @@ export function build(S, opts = {}) {
     if (opts.cohort) p.cohort = cleanCohort(opts.cohort);
     // A review names mostly what is already trained; 60 candidates is plenty for a swap.
     p.library = librarySlice(S, p.coachProfile?.equipment, { keep: trainedIds(S, workouts), max: 60 });
+  } else if (opts.kind === 'session') {
+    // Today's session, as the app computed it. `routine` is the whole context: no library slice
+    // (a session names nothing new), no week (the day is already chosen). The fuel block is
+    // added below like every other kind, and the two single days ride with it when sent.
+    const session = (opts.session && typeof opts.session === 'object' && !Array.isArray(opts.session)) ? opts.session : {};
+    p.routine = cleanSessionRoutine(session.routine);
+    p.history = keyed(cleanSessionHistory(session.history));
+    p.base = keyed(cleanSessionBase(session.base));
+    p.yesterday = cleanFitaiDay(session.yesterday);
+    p.today = cleanFitaiDay(session.today);
   } else {
     p.library = librarySlice(S, p.coachProfile?.equipment, { keep: trainedIds(S, S.workouts || []) });
     // Creation for a returning user: what they have actually handled, so proposed baselines
@@ -644,7 +855,11 @@ export function build(S, opts = {}) {
       p.userNote = String(opts.refine).slice(0, MAX_NOTE_CHARS);
     }
   }
-  if (opts.kind !== 'debrief') {
+  // The fuel block, when there is one to add. After the kind branches on purpose: a review, a
+  // debrief and a session job all read the same seven-day window, so the block is built once
+  // here and is identical for each of them. Unlinked, none of the keys exist at all.
+  if (opts.fitai && typeof opts.fitai === 'object') Object.assign(p, cleanFitai(opts.fitai));
+  if (opts.kind !== 'debrief' && opts.kind !== 'session') {
     const said = conversation(coach, [opts.note, opts.refine]);
     if (said.length) p.conversation = said;
   }

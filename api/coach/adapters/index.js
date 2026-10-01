@@ -18,13 +18,18 @@ import anthropic from '../core/adapters/anthropic.js';
 import openai from '../core/adapters/openai.js';
 import gemini from '../core/adapters/gemini.js';
 import compatible from '../core/adapters/compatible.js';
+import { fileURLToPath } from 'node:url';
 
 /**
  * The in-repo fake provider. Ships with the image on purpose: it is what CI drives, and it
  * lets an instance owner see the entire Coach loop — intake, proposal, apply, revert —
  * before deciding whether to connect a real account to it.
  */
-const FIXTURE = new URL('../fixture-cli.mjs', import.meta.url).pathname;
+// `fileURLToPath`, not `url.pathname`: the latter hands back a URL-encoded path that starts
+// with a slash and names the drive as `/C:`, which is not a path any OS accepts. It happened
+// to be harmless on Linux — where every deploy of this image runs — and broke every job the
+// moment the same code ran on a Windows host.
+const FIXTURE = fileURLToPath(new URL('../fixture-cli.mjs', import.meta.url));
 const fixture = {
   id: 'fixture',
   spawns: true,

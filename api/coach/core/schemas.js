@@ -116,4 +116,36 @@ export const DEBRIEF_SCHEMA = {
   required: ['coach_contract', 'summary', 'score']
 };
 
-export const SCHEMAS = { review: REVIEW_SCHEMA, create: CREATE_SCHEMA, refine: CREATE_SCHEMA, debrief: DEBRIEF_SCHEMA };
+// `targets` is an array (session.md), one entry per exercise in today's routine, each carrying
+// an id from that routine and the sentence that justifies it. The caps are the validator's own,
+// stated here for the same reason create.md's are: a small model that starts repeating itself
+// does not stop at a request, and maxItems ends a runaway answer instead of the output limit.
+export const SESSION_SCHEMA = {
+  type: 'object',
+  properties: {
+    coach_contract: { type: 'integer' },
+    summary: STR,
+    reading: STR,
+    nochange: { type: 'boolean' },
+    targets: {
+      type: 'array',
+      maxItems: 20,
+      items: {
+        type: 'object',
+        properties: {
+          id: STR,
+          weight: { type: 'number' },
+          reps: { type: 'integer' },
+          sets: { type: 'integer' },
+          sec: { type: 'integer' },
+          restSec: { type: 'integer' },
+          why: STR
+        },
+        required: ['id', 'why']
+      }
+    }
+  },
+  required: ['coach_contract', 'summary']
+};
+
+export const SCHEMAS = { review: REVIEW_SCHEMA, create: CREATE_SCHEMA, refine: CREATE_SCHEMA, debrief: DEBRIEF_SCHEMA, session: SESSION_SCHEMA };

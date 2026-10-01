@@ -96,6 +96,10 @@ export const localRefine = async (S, text) => {
   return start(S, 'create', { refine: String(text || '').slice(0, 1000), previous: pendingCreate?.bundle || null, iteration: (pendingCreate?.iteration || 1) + 1 })
 }
 export const localDebrief = (S, workoutId) => start(S, 'debrief', { workoutId: workoutId || null })
+/* Today's targets for one routine. The context is the app's (lib/session-context.js) and is sent
+   with the request rather than read here, for the same reason the server reads it off the body:
+   the core cannot recompute a prescription, and this phone's copy of it is the same code. */
+export const localSession = (S, context) => start(S, 'session', { session: context || null })
 export async function localResolve() { await saveCoachDevice({ pending: null }); return { ok: true } }
 export async function localForget() { job = null; lastError = null; await saveCoachDevice({ pending: null, daily: null }); return { ok: true } }
 
@@ -143,8 +147,18 @@ async function run(S, kind, opts, d, adapter) {
   const key = await getApiKey()
   const payload = payloadLib.build(S, {
     handle: await handle(), kind, intake: opts.intake, note: opts.note, refine: opts.refine, previous: opts.previous, workoutId: opts.workoutId,
+    session: opts.session,
     lang: getLang()   // what the app shows, which a profile that never picked a language does not store (#303)
   })
+  // A session with no routine has nothing to tune, and every answer would be refused for a reason
+  // it cannot fix. Failed here rather than billed for a call — the same line the server's job
+  // runner stops on.
+  if (kind === 'session' && !(payload.routine?.ex || []).length) {
+    lastError = { errorClass: 'nosession' }
+    last = { id: job.id, kind, outcome: 'failed', errorClass: 'nosession', at: Date.now() }
+    if (notify) notify({ kind: 'failed', errorClass: 'nosession' })
+    return
+  }
   const attempt = await runPipeline({
     adapter, cfg: cfgOf(d), kind, payload,
     model: d.model || HTTP_PROVIDERS[d.provider].defaultModel, timeoutMs: timeoutFor(d.provider),

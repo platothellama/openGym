@@ -19,6 +19,10 @@ import { startFlow, exercisePicker, exConfigSheet, exerciseDetailSheet, finishWo
 import { effortColor } from '../lib/effort.js'
 import Icon from '../components/Icon.jsx'
 import { Button, Check, NumberField } from '../components/ui.jsx'
+import { coachAvailable, hasConsent } from '../lib/coach.js'
+import { coachSessionSheet } from '../components/CoachSessionSheet.jsx'
+import { DEMO } from '../lib/demo.js'
+import { MOBILE } from '../lib/mobile.js'
 import { defaultIncrement, weightIncrement, stepWeight } from '../lib/progression.js'
 import { progressionGuidance } from '../lib/progression-copy.js'
 import { buildPlannedEntry, plannedConfigOf, builtOutOfProgression } from '../lib/session-start.js'
@@ -30,6 +34,8 @@ import { isWarmupRow, isDropSet, isRestPauseSet, dropsOf, clustersOf, addDrop, a
 import { canMoveActiveWorkoutUnit, moveActiveWorkoutUnit } from '../lib/active-workout-order.js'
 import { nextOpenSet, workoutKeyAction } from '../lib/workout-keys.js'
 import { MUSCLE_NAME } from '../lib/muscles.js'
+import { suggestTargets, applySessionTargets } from '../lib/session-suggest.js'
+import { getFitaiSummary, fuelLineText } from '../lib/fitai.js'
 
 // How long after a key starts a hold the same key is not yet its "Done" (#133). A USB button
 // that bounces, or a double press, sends two presses a moment apart: the first starts the hold,
@@ -570,6 +576,13 @@ function ExerciseBlock({ entryIdx, compact, dense, editing, onToggle, onToggleSi
       <Icon name={plan.kind === 'up' ? 'arrowUp' : plan.kind === 'deload' ? 'arrowDown' : 'lightbulb'} />
       <span><strong>{t(guidance.policyLabel)}</strong> · {t(...guidance.why)}</span>
     </button>}
+    {/* Why today is lighter than the plan asked for, when Settings → Training system asked the
+        day to be taken gently. Its own line rather than a second progline: this one has no
+        progression settings behind it to open. */}
+    {entry.suggestion?.line && <div className="exnote">
+      <Icon name="info" style={{ fontSize: 13, marginInlineEnd: 5, verticalAlign: '-2px' }} />
+      {fuelLineText(entry.suggestion.line)}
+    </div>}
     </>}
     <div className="card" style={{ marginTop: 10, marginBottom: 0 }}>
       {/* the header carries the same eff3/timed sizing as the rows, or the labels drift off their
@@ -676,6 +689,15 @@ function ActiveWorkout() {
   const { startRest: liveRest, stopRest, stopWork, work, timer } = useUI()
   const A = S.active
   const editing = !!A.editingWorkoutId
+  // The Coach is offered on this screen only when it can actually be asked: the Coach has to be
+  // switched on for this instance, consented to, and have a profile to reason from. A menu row
+  // that opens an intake would be worse than no row - mid-workout is the wrong place for that
+  // question.
+  const config = useStore(s => s.config)
+  const user = useStore(s => s.user)
+  const coachLocal = useStore(s => s.coachLocal)
+  const coachReady = coachAvailable(config, user, { demo: DEMO, mobile: MOBILE, coachMode: coachLocal?.mode })
+    && hasConsent(S) && !!S.coach?.profile
   // A past workout has no rest to time — the sets were done days ago. The work timer for
   // timed sets stays, since counting a hold is how its duration gets entered.
   const startRest = (A.backfill || editing) ? () => {} : liveRest
@@ -698,6 +720,29 @@ function ActiveWorkout() {
   const listMode = workoutView === 'list' || workoutView === 'compact'
   const dense = workoutView === 'compact'
   const wc = workoutControls(S)
+  // Settings → Training system → "Hold on recovery": on a short-recovery day the earned jump
+  // is held instead of spent. The FitAI summary is read once per session and the answer is
+  // stamped on the session, so coming back to this screen later reads the numbers it already
+  // showed instead of backing off a second time. Never for a past workout being logged or
+  // edited: those entries are built from history as of that day, and today's recovery is not
+  // what they are about. applySessionTargets only touches undone rows, so an exercise already
+  // started keeps the weight it went up with.
+  useEffect(() => {
+    const id = A?.id
+    if (!id || editing || A.backfill || A.readinessApplied) return
+    if (S.readinessAuto !== true || !S.fitaiUserId) return
+    let live = true
+    getFitaiSummary(S.fitaiUserId, 7).then(summary => {
+      if (!live || !summary) return
+      update(s => {
+        if (!s.active || s.active.id !== id || s.active.readinessApplied) return
+        s.active.readinessApplied = true
+        const targets = suggestTargets(s.active.entries, s, { summary })
+        if (Object.keys(targets).length) s.active.entries = applySessionTargets(s.active.entries, targets)
+      })
+    })
+    return () => { live = false }
+  }, [A?.id, editing, S.readinessAuto, S.fitaiUserId, update])
   // Superset flow: center the actionable row when completing a set moves to the partner or
   // back to the first exercise of the next round. Entry-bound maps keep repeated exercise IDs
   // distinct, while each rendered set index identifies the existing row within that entry.
@@ -953,6 +998,14 @@ function ActiveWorkout() {
       { icon: 'pencil', label: t('Rename workout'), onClick: renameWorkoutSheet },
       !editing && { icon: 'plus', label: t('Add routine'), sub: t('Bring another routine into this session'), onClick: addRoutineToSessionSheet },
       noProgSwitchable && { icon: 'pause', label: t('Don’t count for progression'), sub: t('Every exercise in this workout'), on: sessionNoProg(A), onClick: toggleSessionNoProg },
+      // Today's numbers, from the Coach. Never on a past workout: "today" is this session, and a
+      // workout being backfilled is about a day whose recovery is not something to re-read.
+      !editing && !A.backfill && coachReady && A.entries.length > 0 && {
+        icon: 'lightbulb',
+        label: t('Ask the Coach'),
+        sub: t('Today’s targets for this session'),
+        onClick: coachSessionSheet,
+      },
       { icon: 'list', label: t('Layout'), sub: LAYOUT_LABEL[workoutView] || LAYOUT_LABEL.cards, onClick: openLayoutMenu },
     ],
   })

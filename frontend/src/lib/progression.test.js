@@ -6,6 +6,7 @@ import {
 } from './progression.js'
 import { entryExcluded } from './history.js'
 import { EXDB, isAssisted } from './exercises.js'
+import { SYSTEMS } from './training-systems.js'
 
 // A plainly loaded lift: more weight is harder. The first match used to be `assisted chest dip`,
 // whose stack takes weight off you and which therefore progresses downwards (issue #232) — these
@@ -113,6 +114,25 @@ describe('policyFor', () => {
     expect(policyFor({ id: LIFT, mode: 'time', prog: 'greyskull' }, null, 'time')).toBe('off')
     expect(policyFor({ id: CARDIO, prog: 'linear' }, null, 'cardio')).toBe('off')
     expect(POLICIES_FOR.cardio).toEqual(['off'])
+  })
+
+  // A training system (training-systems.js) fills in only what the exercise and routine left
+  // alone. These use the real preset objects, so the preset catalogue and this engine are tested
+  // against each other rather than against a hand-written stand-in.
+  it('takes the system\'s policy only when nothing more specific does', () => {
+    expect(policyFor({ id: LIFT }, null, 'reps', SYSTEMS.hypertrophy)).toBe('double')
+    expect(policyFor({ id: LIFT }, { prog: 'greyskull' }, 'reps', SYSTEMS.hypertrophy)).toBe('greyskull')
+    expect(policyFor({ id: LIFT, prog: 'linear' }, { prog: 'greyskull' }, 'reps', SYSTEMS.hypertrophy)).toBe('linear')
+  })
+  it('leaves timed and cardio work alone even with a system on', () => {
+    expect(policyFor({ id: LIFT, mode: 'time' }, null, 'time', SYSTEMS.hypertrophy)).toBe('off')
+    expect(policyFor({ id: LIFT, mode: 'time' }, null, 'time', SYSTEMS.strength)).toBe('off')
+    expect(policyFor({ id: CARDIO }, null, 'cardio', SYSTEMS.hypertrophy)).toBe('off')
+  })
+  it('ignores an absent or nonsensical preset', () => {
+    expect(policyFor({ id: LIFT }, null, 'reps', null)).toBe('linear')
+    expect(policyFor({ id: LIFT }, null, 'reps', {})).toBe('linear')
+    expect(policyFor({ id: LIFT }, null, 'reps', { policy: 'made-up' })).toBe('linear')
   })
 })
 
@@ -1112,5 +1132,70 @@ describe('a weight off the increment grid keeps its offset when it goes up (issu
   it('still snaps from a weight that sits on the grid', () => {
     const p = nextPrescription(hist(LIFT, [[60, 5, 5, 5]]), { id: LIFT, sets: 3, reps: 5, weight: 60, prog: 'linear', inc: 2.5 })
     expect(p.weight).toBe(62.5)
+  })
+})
+
+// The muscle ledger's verdict arriving from muscle-ledger.js. nextPrescription takes it as a
+// plain { action, why } rather than computing it, so the engine stays free of the ledger and this
+// can be tested against the verdict alone.
+describe('a muscle-ledger gate over the prescription', () => {
+  const cfg = { id: LIFT, sets: 3, reps: 5, weight: 60, prog: 'linear', inc: 2.5 }
+  const clean = hist(LIFT, [[60, 5, 5, 5]])
+  const hold = { action: 'hold', why: ['Chest is at its weekly target - holding.', 22] }
+  const deload = { action: 'deload', why: ['Chest is over its weekly target - back off a step.', 25] }
+  // The gate arrives in the 4th argument (opts); the 3rd is the routine.
+  const gated = (gate, st = clean, c = cfg) => nextPrescription(st, c, null, { gate })
+
+  it('changes nothing when the ledger is happy', () => {
+    const plain = nextPrescription(clean, cfg)
+    expect(gated({ action: 'progress', why: null })).toEqual(plain)
+    expect(nextPrescription(clean, cfg, null, {})).toEqual(plain)
+  })
+
+  it('holds at the last weight instead of adding the step', () => {
+    const p = gated(hold)
+    expect(p.kind).toBe('hold')
+    expect(p.weight).toBe(60)
+    // The ledger's reason is the one rendered: Workout does t(...why) on a single line.
+    expect(p.why).toEqual(hold.why)
+  })
+
+  it('takes one increment off on a deload', () => {
+    const p = gated(deload)
+    expect(p.kind).toBe('deload')
+    expect(p.weight).toBe(57.5)
+    expect(p.why).toEqual(deload.why)
+  })
+
+  it('takes help off an assistance machine on a deload, and holds it exactly', () => {
+    // The stack carries part of your weight, so easier means a bigger number (issue #232).
+    const machine = EXDB.find(e => isAssisted(e.id) && e.bp === 'chest')
+    const mcfg = { id: machine.id, sets: 3, reps: 5, weight: 40, prog: 'linear', inc: 2.5 }
+    const st = hist(machine.id, [[40, 5, 5, 5]])
+    expect(gated(hold, st, mcfg).weight).toBe(40)
+    expect(gated(deload, st, mcfg).weight).toBe(42.5)
+  })
+
+  it('never blocks a baseline — there is no last weight to hold', () => {
+    expect(gated(hold, hist(LIFT, [])).kind).toBe('first')
+  })
+
+  it('never touches a policy that is off', () => {
+    expect(gated(deload, clean, { ...cfg, prog: 'off' }).kind).toBe('off')
+  })
+
+  it('gates timed work on seconds, not weight', () => {
+    // A timed session is read from the hold on each row, not from reps.
+    const t = { id: LIFT, sets: 3, sec: 40, mode: 'time', prog: 'time', inc: 5 }
+    const st = {
+      unit: 'kg',
+      workouts: [{ d: '2026-01-01', entries: [{
+        id: LIFT, target: { sets: 3, sec: 40, mode: 'time' },
+        sets: [{ sec: 40, w: 0, done: true }, { sec: 40, w: 0, done: true }, { sec: 40, w: 0, done: true }]
+      }] }]
+    }
+    expect(nextPrescription(st, t).sec).toBe(45)        // the policy on its own adds the step
+    expect(gated(hold, st, t).sec).toBe(40)
+    expect(gated(deload, st, t).sec).toBe(35)
   })
 })

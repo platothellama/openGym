@@ -7,6 +7,8 @@ import { buildSets, applyIntensifierPlan, modeOf } from './history.js'
 import { isWarmupRow } from './workout-model.js'
 import { nextPrescription, applyPrescription, defaultIncrement, weightIncrement, plannedOf } from './progression.js'
 import { dropGrid } from './plates.js'
+import { systemOf, restSecFor as presetRestSecFor, repBandFor } from './training-systems.js'
+import { muscleLedger, muscleVerdict } from './muscle-ledger.js'
 
 /**
  * Where a planned session's reps come from (Settings → During a workout). 'plan', the default:
@@ -25,9 +27,13 @@ export const startsFromLast = st => st?.startFrom === 'last'
  * the exercise is planned in: its own history comes first (#216) and its policy applies.
  * `noProg` builds the routine's own numbers with no prescription, as an excluded routine does.
  */
-export function buildPlannedEntry(st, cfg, routine, { noProg = false } = {}) {
+export function buildPlannedEntry(st, cfg, routine, { noProg = false, ledger = null } = {}) {
   // `plan` is kept on the entry purely so the workout can explain the number it chose.
-  const plan = noProg ? { policy: 'off', kind: 'off' } : nextPrescription(st, cfg, routine)
+  const preset = systemOf(st)
+  const gate = noProg || !preset ? null : muscleVerdict(ledger, cfg, { autoSets: st?.muscleAutoSets === true })
+  const plan = noProg
+    ? { policy: 'off', kind: 'off' }
+    : nextPrescription(st, cfg, routine, { preset, gate: gate?.action === 'progress' ? null : gate })
   // The warm-up ramp and the prescription snap to the exercise's own increment (1.25 kg
   // plates exist), not the unit default; a timed exercise's `inc` is seconds, so it keeps the
   // default for its optional load.
@@ -40,6 +46,19 @@ export function buildPlannedEntry(st, cfg, routine, { noProg = false } = {}) {
   if (plan.reps != null) target.reps = plan.reps
   if (plan.sec != null) target.sec = plan.sec
   if (plan.sets != null) target.sets = plan.sets
+  // The set count the ledger asked for, bounded to one set and never below one. Applied here rather
+  // than in the policy because the ledger steers sets, not load - the policy above has already
+  // decided the weight, and a set added or dropped here must not restart that climb.
+  if (gate?.setDelta && !plan.sets) target.sets = Math.max(1, (cfg.sets || 1) + gate.setDelta)
+  // A system's rest fills in only where the plan left it out. An exercise that carries its own
+  // restSec keeps it — that is the per-exercise override the rest timer already reads. There is no
+  // routine-level rest: Settings' default (st.restSec) is the fallback supersetFlow.js applies to
+  // every entry, and a system rest is more specific than that, so it replaces it by writing the
+  // exercise's own. Skipped entirely with noProg, where no prescription of any kind applies.
+  if (!noProg && !(Number(cfg.restSec) > 0)) {
+    const sec = presetRestSecFor(preset, cfg.id)
+    if (sec) target.restSec = sec
+  }
   // Rows that opened at last session's reps rather than the plan's ("Your last session", and no
   // policy that decided reps), so the workout card can say where the number came from. Written
   // only when true, and never saved with the finished workout.
@@ -95,8 +114,11 @@ export function buildSessionEntries(st, r) {
   // The prescription is applied as the session is built, so you walk up to the bar with the
   // right weight already on the screen instead of being told about it afterwards.
   const noProg = r?.excludeFromProgression === true
+  // One ledger for the whole session: it counts sets per muscle, so it would be identical for
+  // every exercise, and building it per entry would re-read the whole log once per exercise.
+  const ledger = noProg || !systemOf(st) ? null : muscleLedger(st)
   return (r ? r.ex : []).map(cfg => {
-    const built = buildPlannedEntry(st, cfg, r, { noProg })
+    const built = buildPlannedEntry(st, cfg, r, { noProg, ledger })
     return { id: cfg.id, sg: cfg.sg, ...built, ...(noProg ? { noProg: true } : {}) }
   })
 }

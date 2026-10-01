@@ -72,6 +72,13 @@ const _refinePlan = async text => DEMO ? (await demo()).demoRefine(S()) : LOCAL(
 export const refinePlan = (...a) => _refinePlan(...a).then(track)
 const _requestDebrief = async workoutId => DEMO ? (await demo()).demoDebrief(S(), workoutId) : LOCAL() ? (await local()).localDebrief(S(), workoutId) : api('/api/coach/debrief', { method: 'POST', body: JSON.stringify({ workoutId: workoutId || null, lang: getLang() }) })
 export const requestDebrief = (...a) => _requestDebrief(...a).then(track)
+/* Today's targets for one routine, asked from inside the session. The only request whose answer
+   carries numbers the app then writes into a live session, so the context travels with it rather
+   than being read server-side: the server's core cannot recompute the routine or the
+   prescription (lib/session-context.js builds both). `context` is `{ routine, history, base,
+   yesterday, today }`; the server allowlists every field, so anything else here is dropped. */
+const _requestSession = async context => DEMO ? (await demo()).demoSession(S(), context) : LOCAL() ? (await local()).localSession(S(), context) : api('/api/coach/session', { method: 'POST', body: JSON.stringify({ ...(context || {}), lang: getLang() }) })
+export const requestSession = (...a) => _requestSession(...a).then(track)
 // The room: anonymous medians across the profiles on this instance that opted in. Only a
 // server has a room; a phone with its own key and the demo both answer locally.
 export const cohortStats = async () => DEMO ? (await demo()).demoCohort(S()) : LOCAL() ? { ok: false, enabled: false } : api('/api/coach/cohort')
@@ -168,6 +175,7 @@ export const JOB_ERRORS = {
   restart: 'The server restarted while the Coach was thinking.',
   nostate: 'The Coach couldn’t read your training data.',
   noworkout: 'There is no workout to look at yet — log one first.',
+  nosession: 'There is no routine to tune yet — the Coach needs the session you are about to train.',
   internal: 'Something went wrong on the server.'
 }
 

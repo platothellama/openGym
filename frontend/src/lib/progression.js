@@ -78,11 +78,17 @@ export function deloadTarget1RM(weight, reps, factor = DELOAD_FACTOR, perSide = 
 // Body parts where a 5 kg jump is normal rather than brutal.
 const HEAVY_BP = ['upper legs', 'lower legs', 'back', 'hips', 'glutes']
 
+// Whether an exercise is one of those, so a training system can scale its load step the same way
+// the default below does instead of naming a second, driftable list of body parts.
+export const isHeavyLift = exId => {
+  const ex = EXIDX[exId]
+  return !!(ex && HEAVY_BP.includes(ex.bp))
+}
+
 // Default load step. Lower-body lifts take the bigger jump — that is the "lift-specific
 // increment" a linear program lives on; an exercise can override it with cfg.inc.
 export function defaultIncrement(exId, unit) {
-  const ex = EXIDX[exId]
-  const heavy = ex && HEAVY_BP.includes(ex.bp)
+  const heavy = isHeavyLift(exId)
   if (unit === 'lb') return heavy ? 10 : 5
   return heavy ? 5 : 2.5
 }
@@ -96,13 +102,40 @@ export const DEFAULT_SEC_INCREMENT = 5
 // an evening. Past this the honest advice is load or a harder variation (issue #33).
 export const MAX_BW_SETS = 6
 
-// The policy in force for one exercise: its own override, else the routine's default, else
-// the mode's default. Reps keeps behaving the way the app always did (all reps → add a step).
-export function policyFor(cfg, routine, mode) {
+/**
+ * The policy in force for one exercise.
+ *
+ * Resolution order, most specific first: the exercise's own `cfg.prog`, then the routine's, then
+ * the profile's training-system preset (see training-systems.js), then the mode's default. Reps
+ * keeps behaving the way the app always did (all reps → add a step) when no preset is passed,
+ * which is every existing caller.
+ *
+ * A preset only ever *fills in* a policy the exercise and routine left alone, and only for a mode
+ * the preset's policy can drive — a system must not switch timed work off because it has an
+ * opinion about reps. So `preset` is passed in rather than imported: progression.js stays
+ * dependency-free of the preset tables, and a caller holding a bare profile resolves it first.
+ *
+ * @param {object} cfg       the exercise config
+ * @param {object} [routine]
+ * @param {string} [mode]    defaults to the config's own mode
+ * @param {object} [preset]  a resolved training-system preset (has `.policy`, `.timePolicy`)
+ */
+export function policyFor(cfg, routine, mode, preset) {
   const m = mode || modeOf(cfg || {})
   const allowed = POLICIES_FOR[m] || ['off']
-  const pick = (cfg && cfg.prog) || (routine && routine.prog) || (m === 'reps' ? 'linear' : 'off')
+  const own = (cfg && cfg.prog) || (routine && routine.prog)
+  const fromSystem = own ? null : presetPolicy(preset, m)
+  const pick = own || fromSystem || (m === 'reps' ? 'linear' : 'off')
   return allowed.includes(pick) ? pick : 'off'
+}
+
+// Which of a preset's two policies applies to a mode, or null when the preset has none for it.
+// Deliberately duplicated here rather than imported: this file is the engine, it owns POLICIES_FOR,
+// and it must not depend on the preset catalogue to know which policies a mode accepts.
+const presetPolicy = (preset, mode) => {
+  if (!preset) return null
+  const pick = mode === 'time' ? preset.timePolicy : preset.policy
+  return POLICIES.includes(pick) ? pick : null
 }
 
 const round1 = v => Math.round(v * 10) / 10
@@ -370,10 +403,88 @@ export function stallCount(sessions, policy) {
  * undefined and the caller keeps whatever the plan said — for reps, unless the profile starts
  * planned sessions from the last session, in which case the rows keep last time's (see
  * startsFromLast in session-start.js).
+ *
+ * `opts.preset` is the profile's training system and `opts.gate` its muscle ledger's verdict for
+ * this exercise (muscle-ledger.js). Both are optional and both default to nothing, which is what
+ * keeps every existing call byte-identical: no preset means the mode default, no gate means the
+ * policy decides on its own evidence exactly as before.
+ *
+ * A gate never invents a target. On 'hold' it returns the last session's own numbers; on 'deload'
+ * it steps one increment down from the last weight. Both keep the policy's reason and add the
+ * ledger's, so the app can always answer "why this number?" from both.
  */
-export function nextPrescription(S, cfg, routine) {
+export function nextPrescription(S, cfg, routine, opts = {}) {
+  const base = prescribe(S, cfg, routine, opts)
+  const gate = opts.gate
+  // No gate, or the ledger is happy, means the policy's own answer stands — including its own
+  // `kind`, which is what the Workout screen renders and what the tests assert on.
+  if (!gate || gate.action === 'progress') return base
+  return applyGate(base, gate, S, cfg, routine)
+}
+
+/**
+ * The sessions the engine judges by, in one place so the gate and the policy can never disagree
+ * about what "last time" was.
+ */
+function sessionsOf(S, cfg, routine, mode) {
+  return sessionsFor(S, cfg.id, cfg, routine?.id).filter(s => s.mode === mode)
+}
+
+function applyGate(base, gate, S, cfg, routine) {
   const mode = modeOf(cfg)
-  const policy = policyFor(cfg, routine, mode)
+  const unit = S.unit || 'kg'
+  const inc = mode === 'time'
+    ? (cfg.inc > 0 ? cfg.inc : DEFAULT_SEC_INCREMENT)
+    : weightIncrement(cfg, unit)
+  // The ledger gates how hard you go, not whether the session happens. A plan with nothing logged
+  // yet has no last weight to hold or step back from, so 'first' is left alone — a gate that
+  // blocked a baseline would leave the person with nothing to ever gate against.
+  if (base.kind === 'first' || base.kind === 'off') return base
+  const assisted = isAssisted(cfg)
+  const sessions = sessionsOf(S, cfg, routine, mode)
+  const last = sessions[sessions.length - 1]
+  if (!last) return base
+  // The ledger's reason replaces the policy's, because it is the reason the number moved off it:
+  // Workout renders `t(...why)` as one line, and a second line would read as a second
+  // prescription. The policy's own reason is still the history behind it, in `plan.kind`.
+  const why = gate.why || base.why
+
+  if (mode === 'time') {
+    const goal = last.goal || cfg.sec || 0
+    const sec = gate.action === 'hold' ? goal : Math.max(0, goal - inc)
+    return { ...base, kind: gate.action === 'hold' ? 'hold' : 'deload', sec, why }
+  }
+
+  // Everything below is about load. Bodyweight work has none — there is no bar to add a plate to,
+  // so the ledger can only hold the reps the policy asked for, or stop it asking for one more.
+  if (last.weight <= 0 && climbsReps(cfg)) {
+    return gate.action === 'hold'
+      ? { ...base, kind: 'hold', weight: 0, reps: base.reps, sets: base.sets, why }
+      : { ...base, kind: 'deload', weight: 0, reps: base.reps, sets: base.sets, why }
+  }
+  if (!(last.weight > 0)) return base
+
+  // Hold and deload are anchored on what was actually lifted, never on the prescription: a
+  // successful session's prescription is *more* than last time, so holding has to step back off
+  // it, and deloading has to step back off the last weight rather than off the raise.
+  //
+  // Hold is always exactly last time's number. Deload moves one step toward easier, which is
+  // weight down on a bar and *help up* on an assistance machine — the direction the engine's own
+  // harder()/easier() already encode (issue #232), so the gate cannot disagree with them.
+  const anchor = last.weight
+  if (gate.action === 'hold') return { ...base, kind: 'hold', weight: anchor, why }
+  return {
+    ...base,
+    kind: 'deload',
+    weight: Math.max(0, assisted ? anchor + inc : deloadTo(anchor, inc, 1)),
+    why
+  }
+}
+
+function prescribe(S, cfg, routine, opts = {}) {
+  const preset = opts.preset
+  const mode = modeOf(cfg)
+  const policy = policyFor(cfg, routine, mode, preset)
   const unit = S.unit || 'kg'
   const inc = mode === 'time'
     ? (cfg.inc > 0 ? cfg.inc : DEFAULT_SEC_INCREMENT)
@@ -389,7 +500,7 @@ export function nextPrescription(S, cfg, routine) {
 
   // The routine's own sessions of this exercise, or the exercise's whole history when the
   // routine has none yet (issue #216) — see sessionsFor.
-  const sessions = sessionsFor(S, cfg.id, cfg, routine?.id).filter(s => s.mode === mode)
+  const sessions = sessionsOf(S, cfg, routine, mode)
   const last = sessions[sessions.length - 1]
   if (!last) return { policy, kind: 'first', why: ['Nothing logged yet — this session sets the baseline.'] }
 

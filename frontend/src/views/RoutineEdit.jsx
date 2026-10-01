@@ -19,6 +19,7 @@ import { planPrintHTML, printPlan } from '../lib/plan-share.js'
 import { MOBILE, printHtml } from '../lib/mobile.js'
 import { speedUnitOf } from '../lib/speed.js'
 import { POLICIES_FOR, POLICY_NAME, POLICY_DESC } from '../lib/progression.js'
+import { systemOf, applySystemToRoutine, SYSTEM_NAME } from '../lib/training-systems.js'
 import BodyMap from '../components/BodyMap.jsx'
 import { loadOfRoutine, rankOf, MUSCLE_NAME } from '../lib/muscles.js'
 
@@ -329,6 +330,15 @@ export default function RoutineEdit() {
   // included: this still unmounts after the delete button navigates away.
   useEffect(() => () => useStore.getState().autoBackupNow(), [])
   const edit = fn => update(s => { fn(s.routines.find(x => x.id === id).ex) })
+  // The chosen training system, if there is one. Nothing is offered without it: with no system
+  // there is no policy to write, and the button would have nothing to say.
+  const system = systemOf(S)
+  const applied = !!system && r && r.systemApplied === system.id && r.prog === system.policy
+  const applyHere = preset => update(s => {
+    const i = s.routines.findIndex(x => x.id === id)
+    if (i < 0) return
+    s.routines[i] = applySystemToRoutine(s.routines[i], preset).routine
+  })
   const reorder = useRoutineReorder(r, r?.ex || [], (sourceIndex, targetSlot) => {
     edit(exercises => { reorderRoutineUnit(exercises, sourceIndex, targetSlot) })
   })
@@ -432,6 +442,31 @@ export default function RoutineEdit() {
       {r.excludeFromProgression
         ? t('A deload routine opens at the numbers set here, so the progression above does not apply to it.') + ' ' + t('The next regular target continues from the last included workout.')
         : t(POLICY_DESC[r.prog || 'linear'] || POLICY_DESC.linear) + ' ' + t('Applies to every exercise in this routine that does not set its own rule.')}
+      {system && <div style={{ marginTop: 10 }}>
+        {/* The explicit half of the system: Settings resolves a system implicitly, this writes it
+            into the routine so the rule is visible here and travels with it. */}
+        {applied ? <div>{t('This routine already uses {0}.', t(SYSTEM_NAME[system.id]))}</div>
+          : <Button onClick={() => confirmSheet({
+            title: t('Apply training system?'),
+            message: t('{0} will set the progression rule for this routine. Anything you have set by hand stays as it is.',
+              t(SYSTEM_NAME[system.id])),
+            confirmText: t('Apply'),
+            onConfirm: () => applyHere(system)
+          })}>{t('Apply {0} to this routine', t(SYSTEM_NAME[system.id]))}</Button>}
+      </div>}
+      {/* The inverse, offered only when there is something to take back: with the system switched
+          off in Settings the routine keeps what was written here, and that has to be removable —
+          applySystemToRoutine(routine, null) touches nothing else. */}
+      {!system && r.systemApplied && <div style={{ marginTop: 10 }}>
+        <Button onClick={() => confirmSheet({
+          title: t('Remove training system?'),
+          message: t('This routine stops using {0} and goes back to the progression rule above.',
+            t(SYSTEM_NAME[r.systemApplied] || r.systemApplied)),
+          confirmText: t('Remove'),
+          danger: true,
+          onConfirm: () => applyHere(null)
+        })}>{t('Remove {0} from this routine', t(SYSTEM_NAME[r.systemApplied] || r.systemApplied))}</Button>
+      </div>}
     </div>
 
     {missingCount > 0 && <div className="card" style={{ marginBottom: 16, borderColor: 'var(--orange)' }}>

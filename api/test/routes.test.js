@@ -9,6 +9,7 @@ import { tempData } from './helpers.mjs';
 tempData();
 const cfg = await import('../coach/config.js');
 const { coachRoutes } = await import('../coach/routes.js');
+const { DATA_CATEGORIES } = await import('../coach/core/categories.js');
 
 // Every test starts from an empty coach.json: reset() only forgets the cache, and save() merges
 // over what is on disk, so a key filed by the previous test would otherwise still be there.
@@ -151,13 +152,13 @@ test('the compatible endpoint: base URL is validated, a keyless endpoint counts 
   } finally { mock.close(); }
 });
 
-test('the disclosure names the provider and the same five categories the payload builds from', async () => {
+test('the disclosure names the provider and the same categories the payload builds from', async () => {
   fresh({ provider: 'gemini' });
   const { call } = harness();
   const r = await call('GET /api/coach/disclosure');
   assert.equal(r.status, 200);
   assert.equal(r.body.providerLabel, 'Google Gemini');
-  assert.deepEqual(r.body.categories, ['plan', 'training', 'bodyweight', 'profile', 'prefs']);
+  assert.deepEqual(r.body.categories, [...DATA_CATEGORIES]);
 });
 
 /* ---------- debrief + cohort routes ---------- */

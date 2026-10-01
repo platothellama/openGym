@@ -129,3 +129,16 @@ export function fuelReadiness(summary) {
   if (!lines.length && !low) return { state: 'fueled', lines }
   return { state: lines.some(l => l.kind === 'fasted') ? 'fasted' : 'low', lines }
 }
+
+/**
+ * The one line to show for a short-recovery week, in the order every screen prefers:
+ * the bigger gap first, then the protein one, then the acute fast. Raw, so lib/ stays
+ * out of i18n — the caller words it with fuelLineText (lib/fitai.js). Null when nothing
+ * is worth a line, which for a 'low' state means nothing specific to name.
+ */
+export function fuelLineOf(summary) {
+  const nut = summary?.nutrition || {}
+  if (Number.isFinite(nut.deficitVsTarget) && nut.deficitVsTarget > 0) return { kind: 'deficit', kcal: Math.round(nut.deficitVsTarget) }
+  if (Number.isFinite(nut.proteinVsTarget) && nut.proteinVsTarget > 0) return { kind: 'protein', grams: Math.round(nut.proteinVsTarget) }
+  return fuelReadiness(summary).lines[0] || null
+}

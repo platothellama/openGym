@@ -4,6 +4,7 @@
 // daily cap, the key never touching S, and a proposal surviving in the device file.
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { todayISO } from './format.js'
+import { DATA_CATEGORIES } from '../../../api/coach/core/categories.js'
 
 // The device file and the secret store are in-memory here; nativeFetch is the script.
 const device = { data: null }
@@ -25,7 +26,7 @@ vi.mock('./capacitor-fetch.js', () => ({
 
 const local = await import('./coach-local.js')
 const { _resetCoachDevice, loadCoachDevice, saveCoachDevice } = await import('./coach-device.js')
-const { applyChangeSet, markStale, planHash } = await import('./coach.js')
+const { applyChangeSet, markStale, planHash, applySessionProposal } = await import('./coach.js')
 const { todayISO } = await import('./format.js')
 const { EXERCISES } = await import('../../../api/coach/core/library-data.js')
 
@@ -79,6 +80,42 @@ describe('the Coach on a phone with its own key', () => {
     applyChangeSet(S, marked, ['c1'])
     expect(S.routines[0].ex[0].sets).toBe(4)
     expect(S.coach.snapshots).toHaveLength(1)
+  })
+
+  // The session answer is the one the Coach gives inside a running workout, so it is the one
+  // where a lost key or an empty session has to fail quietly: the person is mid-set.
+  describe('the session answer on the phone', () => {
+    const entry = (id, over = {}) => ({ id, target: { id, sets: 3, reps: 8, mode: 'reps', weight: 40, restSec: 90, ...over }, plan: { kind: 'up' }, sets: [] })
+    const context = () => ({
+      routine: { id: 'r1', name: 'A', ex: [{ id: EX, reps: 8, sets: 3, weight: 40, restSec: 90 }, { id: EX2, reps: 10, sets: 3, restSec: 90 }] },
+      base: { [EX]: { weight: 40, reps: 8, sets: 3, restSec: 90, kind: 'up' }, [EX2]: { reps: 10, sets: 3, restSec: 90, kind: 'hold' } },
+      history: { [EX]: [{ d: todayISO(), summary: '40 kg x 8 x 3', weight: 40, reps: 24 }] },
+    })
+    const answer = { coach_contract: 1, summary: 'Holding the jump.', targets: [
+      { id: EX, weight: 37.5, restSec: 120, why: 'a short night' },
+      { id: EX2, reps: 10, why: 'as planned' },
+    ] }
+
+    it('runs the same pipeline and hands back a proposal the session apply engine accepts', async () => {
+      wire.answer = chat(JSON.stringify(answer))
+      await local.localSession(state(), context())
+      const s = await settle()
+      expect(s.pending.kind).toBe('session')
+      expect(s.pending.planHash).toBe(planHash(state()))
+      expect(wire.calls).toHaveLength(1)
+      expect(wire.calls[0].body.messages[1].content).toContain('"routine"')
+      const res = applySessionProposal({ ...state(), active: { id: 'w1', entries: [entry(EX), entry(EX2, { reps: 10 })] } }, s.pending)
+      expect(res.applied).toBe(1)          // EX2's answer repeats the numbers already in play
+      expect(res.targets[EX]).toMatchObject({ weight: 37.5, restSec: 120 })
+    })
+
+    it('an empty session fails as nosession, with no job and no proposal', async () => {
+      await local.localSession(state(), { routine: { ex: [] } })
+      const s = await settle()
+      expect(s.pending).toBe(null)
+      expect(s.last.errorClass).toBe('nosession')
+      expect(wire.calls).toHaveLength(0)   // nothing to ask about, so nothing is sent to the provider
+    })
   })
 
   it('spends the single repair round when the first answer is unusable, then gives up', async () => {
@@ -192,7 +229,7 @@ describe('the Coach on a phone with its own key', () => {
     const d = await local.localDisclosure()
     expect(d.payer).toBe('you')
     expect(d.host).toBe('api.openai.com')
-    expect(d.categories).toEqual(['plan', 'training', 'bodyweight', 'profile', 'prefs'])
+    expect(d.categories).toEqual([...DATA_CATEGORIES])
   })
 })
 

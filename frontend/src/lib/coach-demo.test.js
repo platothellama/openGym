@@ -10,10 +10,10 @@
 // test here starts a job and then drains it. A test that leaves one running would 409 the next.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import {
-  demoStatus, demoPlan, demoReview, demoRefine, demoDebrief, demoResolve, demoCohort, demoDisclosure
+  demoStatus, demoPlan, demoReview, demoRefine, demoDebrief, demoSession, demoResolve, demoCohort, demoDisclosure
 } from './coach-demo.js'
 import { EXDB, EXIDX } from './exercises.js'
-import { planHash, validateProposal, applyChangeSet } from './coach.js'
+import { planHash, validateProposal, validateSessionTargets, applyChangeSet } from './coach.js'
 import { DATA_CATEGORIES } from '../../../api/coach/core/categories.js'
 
 const DELAY = 2200                       // the module's own thinking time
@@ -300,6 +300,95 @@ describe('coach-demo — the review', () => {
     expect(demoStatus().job).toBe(null)
     vi.advanceTimersByTime(DELAY)
     expect(demoStatus().pending).toBe(null)
+  })
+})
+
+// A session answer is read out of the context the app sent rather than the state, so the asserts
+// are about that: an answer per exercise in the session, holding the jump on a short night's
+// sleep, and every number inside the bounds the app's own validator holds - so applying one here
+// runs the same path a live instance does.
+describe('coach-demo — the session answer', () => {
+  const entry = (id, over = {}) => ({
+    id,
+    target: { id, sets: 3, reps: 10, mode: 'reps', weight: 60, restSec: 120, ...over.target },
+    plan: { kind: over.kind || 'hold' },
+    sets: [],
+  })
+  const context = (over = {}) => ({
+    routine: { id: 'r1', name: 'Push', ex: [{ id: PRESS, reps: 10, sets: 3, weight: 60, restSec: 120 }, { id: ROW, reps: 10, sets: 3, weight: 50, restSec: 120 }] },
+    base: { [PRESS]: { weight: 60, reps: 10, sets: 3, restSec: 120, kind: 'hold' }, [ROW]: { weight: 50, reps: 10, sets: 3, restSec: 120, kind: 'hold' } },
+    history: { [PRESS]: [{ d: day(2), summary: '60 kg x 10 x 3', weight: 60, reps: 30 }] },
+    ...over,
+  })
+  const entries = () => [entry(PRESS), entry(ROW)]
+
+  it('answers for every exercise in the session, each with a reason', () => {
+    const p = think(() => demoSession(state(), context()))
+    expect(p.kind).toBe('session')
+    expect(p.targets.map(x => x.id)).toEqual([PRESS, ROW])
+    expect(p.targets.every(x => typeof x.why === 'string' && x.why.length > 0)).toBe(true)
+  })
+
+  it('holds the jump and takes more rest on a short night', () => {
+    const c = context({
+      base: { [PRESS]: { weight: 60, reps: 10, sets: 3, restSec: 120, kind: 'up' } },
+      history: { [PRESS]: [{ d: day(3), summary: '55 kg x 10 x 3', weight: 55, reps: 30 }, { d: day(1), summary: '60 kg x 10 x 3', weight: 60, reps: 30 }] },
+      today: { date: day(0), sleepH: 4.5 },
+    })
+    const p = think(() => demoSession(state(), c))
+    const t = p.targets.find(x => x.id === PRESS)
+    expect(t.weight).toBe(55)
+    expect(t.restSec).toBe(150)
+    expect(t.why).toContain('Short sleep')
+  })
+
+  it('repeats the previous weight when the last session came in under the plan', () => {
+    const c = context({
+      base: { [PRESS]: { weight: 60, reps: 10, sets: 3, restSec: 120, kind: 'up' } },
+      history: { [PRESS]: [{ d: day(3), summary: '55 kg x 10 x 3', weight: 55, reps: 30 }, { d: day(1), summary: '60 kg x 8 x 3', weight: 60, reps: 24 }] },
+    })
+    const p = think(() => demoSession(state(), c))
+    const t = p.targets.find(x => x.id === PRESS)
+    expect(t.weight).toBe(55)
+    expect(t.restSec).toBe(150)
+  })
+
+  it('leaves a deload week alone, and says so', () => {
+    const c = context({ base: { [PRESS]: { weight: 60, reps: 10, sets: 3, restSec: 120, kind: 'deload' } } })
+    const p = think(() => demoSession(state(), c))
+    const t = p.targets.find(x => x.id === PRESS)
+    expect(Object.keys(t)).toEqual(['id', 'why'])
+    expect(t.why).toContain('deload')
+  })
+
+  it('an answer with nothing to change validates to nothing the app would apply', () => {
+    const p = think(() => demoSession(state(), context()))
+    const { targets, dropped } = validateSessionTargets(p, entries())
+    expect(Object.keys(targets)).toEqual([])
+    expect(dropped).toHaveLength(2)
+    expect(dropped.every(d => d.unchanged)).toBe(true)
+    expect(p.summary).toContain('exactly as the plan built it')
+  })
+
+  it("an answer with something to change passes the app's own validator", () => {
+    const c = context({
+      base: { [PRESS]: { weight: 60, reps: 10, sets: 3, restSec: 120, kind: 'up' } },
+      history: { [PRESS]: [{ d: day(3), summary: '55 kg x 10 x 3', weight: 55, reps: 30 }, { d: day(1), summary: '60 kg x 10 x 3', weight: 60, reps: 30 }] },
+      today: { date: day(0), sleepH: 4.5 },
+    })
+    const p = think(() => demoSession(state(), c))
+    const { targets } = validateSessionTargets(p, [entry(PRESS, { kind: 'up' }), entry(ROW)])
+    expect(targets[PRESS]).toMatchObject({ weight: 55, restSec: 150 })
+    // And the untouched exercise is left out rather than offered as an arrow to nowhere.
+    expect(targets[ROW]).toBeUndefined()
+  })
+
+  it('refuses up front when there is no session to tune, and starts no job', () => {
+    let err
+    try { demoSession(state(), { routine: { ex: [] } }) } catch (e) { err = e }
+    expect(err.status).toBe(409)
+    expect(err.code).toBe('nosession')
+    expect(demoStatus().job).toBe(null)
   })
 })
 

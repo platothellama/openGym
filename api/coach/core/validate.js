@@ -621,6 +621,113 @@ function currentOf(type, routine, planned, plan, target) {
   }
 }
 
+/* =============================== session targets =============================== */
+
+const MAX_SESSION_TARGETS = 20;
+const MAX_REST_SEC = 300;
+// Mirrors SESSION_KINDS in payload.js, which is what let a `kind` into the payload at all.
+const TARGET_KINDS = ['first', 'up', 'hold', 'deload', 'off'];
+
+/**
+ * Validate a session answer — today's working targets for one routine, the one task where the
+ * model does set day-to-day loads.
+ *
+ * The closed list of change types does not apply here, and it must not: there is nothing to add,
+ * remove or reorder when the answer is "the same exercises, at these numbers". What it is held
+ * to instead is (a) exercise ids from the routine in the payload and only those, (b) one target
+ * per exercise, no duplicates and none missed, (c) the numeric bounds session.md states, and
+ * (d) a `why` on every target, because a load with no reason behind it is the one thing this
+ * answer may never produce. `payload.base` is what the model was told to treat as the default;
+ * it is passed in so `before` can be reported, not so it can be enforced — the bounds above are
+ * the contract, and anything tighter would reject answers the prompt explicitly allows.
+ *
+ * Returns { ok, nochange } | { ok, proposal:{ summary, targets } } | { ok:false, errors }.
+ */
+export function validateSession(data, payload = {}) {
+  if (!data || typeof data !== 'object') return fail(['the answer was not an object']);
+  if (data.nochange) return { ok: true, nochange: true, reading: clampStr(data.reading || data.summary || '', 1200) };
+
+  const errors = [];
+  if (!isStr(data.summary)) errors.push('summary is required — one or two sentences on the progression and the recovery read');
+  const routine = (payload.routine && typeof payload.routine === 'object' ? payload.routine : null);
+  const ex = (Array.isArray(routine?.ex) ? routine.ex : []).filter(e => e && isStr(e.id));
+  if (!ex.length) errors.push('the payload carried no routine to tune — a session job must be sent with the routine about to be trained');
+  const planned = new Map(ex.map(e => [e.id, e]));
+  const base = (payload.base && typeof payload.base === 'object' && !Array.isArray(payload.base)) ? payload.base : {};
+  const exIdsOfRoutine = () => [...planned.keys()].map(id => `"${id}"`).join(', ') || '(none)';
+
+  const list = Array.isArray(data.targets) ? data.targets : null;
+  if (!list) return fail([...errors, 'targets must be an array (or set "nochange": true with a "reading")']);
+
+  const seen = new Set();
+  const targets = [];
+  list.slice(0, MAX_SESSION_TARGETS).forEach((t, i) => {
+    const where = `targets[${i}]`;
+    if (!t || typeof t !== 'object') { errors.push(`${where} is not an object`); return; }
+    if (!safeId(t.id)) { errors.push(`${where}.id is required`); return; }
+    const plannedEx = planned.get(t.id) || null;
+    // The same rule as FR-16 on the other two kinds: an id that resolves to nothing invalidates
+    // the answer rather than being applied to a session that does not contain that exercise.
+    if (!plannedEx) {
+      errors.push(`${where}.id "${t.id}" is not one of today's exercises — use an id from the routine in the payload: ${exIdsOfRoutine()}`);
+      return;
+    }
+    if (seen.has(t.id)) { errors.push(`${where}.id "${t.id}" appears twice — one target per exercise`); return; }
+    seen.add(t.id);
+    if (!isStr(t.why)) { errors.push(`${where}.why is required — every target must cite the evidence behind it`); return; }
+
+    // Every field is optional: session.md says a field with no opinion may be omitted and the
+    // app keeps its base value. What is written out is therefore only what was actually said,
+    // checked against the bounds the prompt stated — weight 0-1000, reps 1-100 (even when
+    // per-side), sets 1-10, sec 5-3600, restSec 0 or 15-300.
+    const out = { id: t.id, name: libraryName(t.id), why: clampStr(t.why, 600) };
+    if (t.weight != null) {
+      if (!isNum(t.weight) || t.weight < 0 || t.weight > MAX_WEIGHT) { errors.push(`${where}.weight must be a number 0-${MAX_WEIGHT}`); return; }
+      out.weight = t.weight;
+    }
+    if (t.reps != null) {
+      if (!isInt(t.reps, 1, 100)) { errors.push(`${where}.reps must be a whole number 1-100`); return; }
+      // Read off the routine, not off whatever the target claims about itself.
+      if (plannedEx.side && t.reps % 2) { errors.push(ODD_PER_SIDE(`${where}.reps`)); return; }
+      out.reps = t.reps;
+    }
+    if (t.sets != null) {
+      if (!isInt(t.sets, 1, 10)) { errors.push(`${where}.sets must be a whole number of sets (1-10)`); return; }
+      out.sets = t.sets;
+    }
+    if (t.sec != null) {
+      if (!isInt(t.sec, 5, 3600)) { errors.push(`${where}.sec must be seconds (5-3600)`); return; }
+      out.sec = t.sec;
+    }
+    if (t.restSec != null) {
+      if (!isInt(t.restSec, 15, MAX_REST_SEC) && t.restSec !== 0) { errors.push(`${where}.restSec must be 0 or 15-${MAX_REST_SEC} seconds`); return; }
+      out.restSec = t.restSec;
+    }
+    // `before` is read off the app's own prescription rather than copied from the answer, for
+    // the reason it is everywhere else: the model's idea of the current value is the one number
+    // on a target that nothing else constrains, and the card's before→after column is drawn
+    // from it. Omitted where the app never sent one.
+    const b = base[t.id];
+    if (b && typeof b === 'object' && !Array.isArray(b)) {
+      out.before = {};
+      for (const k of ['weight', 'reps', 'sets', 'sec', 'restSec']) if (isNum(b[k])) out.before[k] = b[k];
+      if (TARGET_KINDS.includes(b.kind)) out.before.kind = b.kind;
+    }
+    targets.push(out);
+  });
+
+  // Every exercise in the routine gets one target: a model that quietly dropped the exercise
+  // somebody was about to train has silently changed the session, which is the one outcome this
+  // answer must not have.
+  for (const e of ex) {
+    if (!seen.has(e.id)) errors.push(`no target for "${e.id}" — every exercise in today's routine gets exactly one target`);
+  }
+  if (list.length > MAX_SESSION_TARGETS) errors.push(`targets names ${list.length} entries, more than the ${MAX_SESSION_TARGETS} allowed`);
+
+  if (errors.length) return fail(errors);
+  return { ok: true, proposal: { summary: clampStr(data.summary.trim(), 1200), targets } };
+}
+
 function fail(errors) { return { ok: false, errors }; }
 
 /* =============================== workout debriefs =============================== */

@@ -21,6 +21,7 @@ import { mediaStore } from '../lib/media-store.js'
 import { syncMedia, fetchToStore } from '../lib/media-sync.js'
 import { getMediaStatus, subscribeMediaStatus, pendingRefCount } from '../lib/media-owed.js'
 import { limitsFrom, fmtMB, MB } from '../lib/media-limits.js'
+import { SYSTEM_LIST, SYSTEM_NAME, SYSTEM_DESC, systemIdOf, systemOf } from '../lib/training-systems.js'
 import { setRestAccent } from '../lib/rest-alert.js'
 import { checkForUpdate, downloadAndInstall } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
@@ -502,6 +503,9 @@ export default function Settings() {
       </Row>
     </Section>
 
+    {/* ---------- training system ---------- */}
+    <TrainingSystemSection S={S} update={update} />
+
     {(user || MOBILE) && <NotificationsCard S={S} update={update} toast={toast} />}
 
     {/* ---------- equipment ---------- */}
@@ -645,6 +649,50 @@ function WorkoutControlsSheet() {
 }
 function workoutControlsSheet() {
   useUI.getState().openSheet(() => <WorkoutControlsSheet />)
+}
+
+/**
+ * Settings → Training system: the preset a profile runs, and what the ledger is allowed to do.
+ *
+ * A system is a *fallback* layer, not a rewrite (lib/training-systems.js): an exercise or routine
+ * that names its own progression rule keeps it, so switching one on never changes a plan that
+ * already says what it wants. That is why this is one picker and no bulk-apply button — writing the
+ * system into routines is a separate, explicit act the user asks for there.
+ *
+ * 'off' is the first option and the default, and an unknown or absent value reads as off
+ * (systemOf), so a profile written before this setting existed is untouched.
+ */
+function TrainingSystemSection({ S, update }) {
+  const id = systemIdOf(S) || 'off'
+  const preset = systemOf(S)
+  // The set toggle only means anything with a weekly cap behind it; readiness is its own rule and
+  // works with no system at all, which is why it is not nested under one.
+  return (
+    <Section title={t('Training system')}
+      footer={t('A system fills in only where an exercise or routine has no rule of its own. Anything you have already set stays as you set it.')}>
+      <SelectRow icon="list" iconTint="var(--acc)" title={t('System')}
+        value={id} onChange={v => update(s => { s.trainSystem = v })}
+        options={SYSTEM_LIST.map(key => ({
+          value: key,
+          label: t(SYSTEM_NAME[key]),
+          subtitle: key === 'off'
+            ? t('Your own progression rules decide everything, exactly as before.')
+            : t(SYSTEM_DESC[key])
+        }))} />
+      {preset && <>
+        <Row icon="clipboard" iconTint="var(--purple)" title={t('Let it add or drop a set')}
+          subtitle={t('The ledger may change today’s set count by one. Off, it only holds or deloads the weight.')}>
+          <Switch checked={S.muscleAutoSets === true}
+            onChange={v => update(s => { s.muscleAutoSets = v })} />
+        </Row>
+      </>}
+      <Row icon="heart" iconTint="var(--pink)" title={t('Hold on recovery')}
+        subtitle={t('On a short-recovery day, hold the weight instead of raising it. Needs FitAI connected.')}>
+        <Switch checked={S.readinessAuto === true}
+          onChange={v => update(s => { s.readinessAuto = v })} />
+      </Row>
+    </Section>
+  )
 }
 
 // Download progress sheet — receives a ref callback that exposes a (received, total) setter.

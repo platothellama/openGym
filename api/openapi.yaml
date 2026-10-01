@@ -151,7 +151,7 @@ tags:
       404 when the instance runs with `MEDIA_UPLOADS=0`.
   - name: coach
     description: >-
-      AI Coach — plans, reviews and debriefs. Every route here answers 503 unless the
+      AI Coach — plans, reviews, debriefs and one session's targets. Every route here answers 503 unless the
       instance has the Coach switched on and a provider connected.
 
 security:
@@ -2498,6 +2498,150 @@ paths:
         '429': { $ref: '#/components/responses/CoachRefused' }
         '503': { $ref: '#/components/responses/CoachOff' }
 
+  /api/coach/session:
+    post:
+      tags: [coach]
+      operationId: postCoachSession
+      summary: Tune today's targets for one routine
+      description: |
+        Queues a `session` job: the working targets for a routine the person is about to
+        train — weight, reps, sets and rest per exercise. Unlike `plan` and `review`, this
+        is the one kind whose answer carries numbers the app will write into a session in
+        progress, so the context comes from the app rather than from stored state: core/ is
+        framework-free and cannot recompute the routine or the prescription.
+
+        Every field below is read one at a time through an allowlist and bounded
+        (`20` exercises, the last `5` sessions each). Anything not named here, and any value
+        of the wrong shape, reads as absent — it is never passed through. The answer must name
+        every exercise in `routine` exactly once, stay inside the bounds the prompt states
+        (weight 0-1000, reps 1-100, sets 1-10, sec 5-3600, restSec 0 or 15-300), and carry a
+        `why` on every target; the two accept/reject routes report which of those was broken.
+
+        `yesterday` and `today` are the FitAI bridge's single-day blocks, and `fitai` is its
+        seven-day summary. All three are client-supplied and all three travel only when the
+        profile is linked to FitAI.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                routine:
+                  type: object
+                  description: |
+                    The routine about to be trained. Required in practice: a job sent without one
+                    fails as `nosession` before any provider is called.
+                  properties:
+                    id: { type: string, maxLength: 40 }
+                    name: { type: string, maxLength: 80 }
+                    prog: { $ref: '#/components/schemas/ProgressionKind' }
+                    ex:
+                      type: array
+                      maxItems: 20
+                      items:
+                        type: object
+                        properties:
+                          id: { type: string, maxLength: 24, description: A catalogue or custom exercise id. }
+                          name: { type: string, maxLength: 120 }
+                          sets: { type: number }
+                          mode: { type: string, enum: [reps, time, cardio] }
+                          weight: { type: number }
+                          reps: { type: number }
+                          sec: { type: number }
+                          min: { type: number }
+                          speed: { type: number }
+                          restSec: { type: number }
+                          prog: { $ref: '#/components/schemas/ProgressionKind' }
+                          inc: { type: number }
+                          repsMin: { type: number }
+                          repsMax: { type: number }
+                          bodyweight: { type: boolean }
+                          side: { type: boolean, description: Reps are the total across both sides and must stay even. }
+                history:
+                  type: object
+                  description: |
+                    Per exercise, the last few times it was trained, oldest first, as
+                    `{ d, summary, weight, reps }`. Capped at 5 per exercise and 20 exercises.
+                  additionalProperties:
+                    type: array
+                    maxItems: 5
+                    items:
+                      type: object
+                      properties:
+                        d: { type: string, description: 'ISO date, YYYY-MM-DD.' }
+                        summary: { type: string, maxLength: 60, description: 'Reads like "50x10,10,10".' }
+                        weight: { type: number }
+                        reps: { type: number }
+                base:
+                  type: object
+                  description: |
+                    The app's own deterministic prescription per exercise, which the Coach is
+                    told to adjust rather than reinvent. Also the source of the `before` column on
+                    the card, so it is never taken from the answer.
+                  additionalProperties:
+                    type: object
+                    properties:
+                      weight: { type: number }
+                      reps: { type: number }
+                      sets: { type: number }
+                      sec: { type: number }
+                      restSec: { type: number }
+                      kind: { type: string, enum: [first, up, hold, deload, off] }
+                yesterday:
+                  type: object
+                  description: |
+                    The previous day's FitAI block, if linked. Flattened by the app out of the
+                    bridge's whole day (frontend/src/lib/session-context.js `fitaiDayBlock`); a
+                    reading the bridge had nothing for is absent rather than zero.
+                  properties:
+                    date: { type: string, description: 'ISO date, YYYY-MM-DD.' }
+                    kcal: { type: number }
+                    protein: { type: number }
+                    carbs: { type: number }
+                    fat: { type: number }
+                    sleepH: { type: number }
+                    restingHr: { type: number }
+                    steps: { type: number }
+                    activeKcal: { type: number }
+                    fasting: { type: string, maxLength: 24, description: "The fast's protocol, when one touched the day." }
+                today:
+                  type: object
+                  description: "Today's FitAI block, if linked and dated. Same shape as `yesterday`."
+                  properties:
+                    date: { type: string }
+                    kcal: { type: number }
+                    protein: { type: number }
+                    carbs: { type: number }
+                    fat: { type: number }
+                    sleepH: { type: number }
+                    restingHr: { type: number }
+                    steps: { type: number }
+                    activeKcal: { type: number }
+                    fasting: { type: string, maxLength: 24 }
+                fitai:
+                  type: object
+                  description: |
+                    The seven-day FitAI summary, as the same body block every other kind takes
+                    (`nutrition`, `glucose`, `fasting`, `health`, `activity`). Client-supplied
+                    like the rest of this request: the bridge is a separate service, and a phone
+                    that runs the Coach itself reads it without a server. Cleaned into the
+                    payload's `fuel` block field by field; absent when the profile is not
+                    linked.
+                lang:
+                  type: string
+                  pattern: '^[A-Za-z]{2,3}([-_][A-Za-z0-9]{2,8})?$'
+                  description: |
+                    The language the app is showing, which the Coach writes in. Absent or not a
+                    language tag, the profile's stored `lang` is used.
+      responses:
+        '202': { $ref: '#/components/responses/CoachJobQueued' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/CoachRefused' }
+        '409': { $ref: '#/components/responses/CoachRefused' }
+        '429': { $ref: '#/components/responses/CoachRefused' }
+        '503': { $ref: '#/components/responses/CoachOff' }
+
   /api/coach/equipment/scan:
     post:
       tags: [coach]
@@ -2980,6 +3124,32 @@ components:
                 properties:
                   id: { type: string, description: 16 hex characters. }
           example: { job: { id: "9f1c2d3e4a5b6c7d" } }
+    BadRequest:
+      description: >-
+        The request could not be read — a missing field, the wrong type, or a value outside the
+        bounds this endpoint holds to. Nothing is started and nothing is charged.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+          example: { error: "kind is required" }
+    CoachFailed:
+      description: >-
+        The provider answered, and the answer could not be used. The message is for the person
+        holding the key; the raw provider detail never reaches the user.
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [ok, error, code]
+            properties:
+              ok: { type: boolean, enum: [false] }
+              error: { type: string }
+              code: { type: string }
+      examples:
+        unusable:
+          value: { ok: false, error: "the model did not answer in the agreed shape", code: unusable }
+        provider:
+          value: { ok: false, error: "the provider refused the request", code: provider }
     CoachRefused:
       description: |
         The Coach will not take this job, and says which reason in `code`:
@@ -3345,7 +3515,7 @@ components:
             size: { type: integer }
             width: { type: integer }
             height: { type: integer }
-        at: { type: number, description: When it was attached, ms. }
+        at: { type: number, description: 'When it was attached, ms.' }
 
     MediaConfig:
       type: object
@@ -3607,6 +3777,14 @@ components:
         name: Ada
 
     # ------------------------------------------------------------------ AI Coach
+    ProgressionKind:
+      type: string
+      enum: [off, linear, greyskull, double, time]
+      description: |
+        The progression engine's policies (frontend/src/lib/progression.js POLICIES). A value
+        outside this list is dropped rather than forwarded, so the app never receives a policy it
+        cannot run.
+
     CoachCap:
       type: object
       description: What this profile has spent of its daily allowance.
@@ -3622,7 +3800,7 @@ components:
             - type: object
               properties:
                 id: { type: string }
-                kind: { type: string, enum: [create, review, debrief] }
+                kind: { type: string, enum: [create, review, debrief, session] }
                 state: { type: string, enum: [queued, running] }
                 startedAt: { type: integer, description: Epoch ms. }
             - type: 'null'
@@ -3645,11 +3823,11 @@ components:
               description: How the most recent job ended, so the chat can say so in the Coach's own voice.
               properties:
                 id: { type: string }
-                kind: { type: string, enum: [create, review, debrief] }
+                kind: { type: string, enum: [create, review, debrief, session] }
                 outcome: { type: string, enum: [ready, nochange, applied, dismissed, expired, failed] }
                 errorClass:
                   oneOf: [{ type: string }, { type: 'null' }]
-                  description: e.g. `provider`, `unusable`, `restart`, `forgotten`, `consent`, `noworkout`.
+                  description: e.g. `provider`, `unusable`, `restart`, `forgotten`, `consent`, `noworkout`, `nosession`.
                 at: { type: integer, description: Epoch ms. }
                 reading: { type: string, description: "Present on `nochange` — why there was nothing to change." }
             - type: 'null'
@@ -3660,10 +3838,10 @@ components:
         The answer waiting for a decision, from whichever kind of job produced it. It
         expires 14 days after it was made; the first status poll after that retires it.
         `changes` comes from a review, `bundle` from a plan, `score`/`highlights` from a
-        debrief — one of the three, never more.
+        debrief, `targets` from a session — one of the four, never more.
       properties:
         id: { type: string, description: The job's id. }
-        kind: { type: string, enum: [create, review, debrief] }
+        kind: { type: string, enum: [create, review, debrief, session] }
         createdAt: { type: integer, description: Epoch ms. }
         expiresAt: { type: integer, description: Epoch ms. }
         planHash: { type: string, description: The plan this was written against — a later edit makes it stale. }
@@ -3729,6 +3907,31 @@ components:
         highlights: { type: array, items: { type: string } }
         watch: { type: array, items: { type: string } }
         nextTime: { type: array, items: { type: string } }
+        targets:
+          type: array
+          description: |
+            Today's working targets, from a `session` job: one per exercise in the routine that
+            was sent, in the routine's order, already inside the prompt's bounds. The client
+            writes the numbers it wants into the live session and leaves every field absent here
+            to the prescription it already had. `before` is the app's own value for the same
+            field, never the model's, so the card's before→after column is drawn from what the
+            app actually had.
+          maxItems: 20
+          items:
+            type: object
+            properties:
+              id: { type: string, description: An exercise id from the routine that was sent. }
+              name: { type: string, description: 'The catalogue name, so the card can name it.' }
+              weight: { type: number, minimum: 0, maximum: 1000 }
+              reps: { type: integer, minimum: 1, maximum: 100 }
+              sets: { type: integer, minimum: 1, maximum: 10 }
+              sec: { type: integer, minimum: 5, maximum: 3600 }
+              restSec: { type: integer, description: '0, or 15-300.' }
+              why: { type: string, maxLength: 600, description: Required on every target. }
+              before:
+                type: object
+                description: What the app's prescription said, for the fields above.
+                additionalProperties: true
         workout:
           type: object
           description: Which session a debrief read.

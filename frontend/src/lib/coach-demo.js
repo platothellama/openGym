@@ -21,6 +21,7 @@ import { planHash } from './coach.js'
 import { ALL_DAYS, defaultDays } from './week-plan.js'
 import { weekStartOf } from './format.js'
 import { t } from './i18n.js'
+import { DATA_CATEGORIES } from '../../../api/coach/core/categories.js'
 
 const DELAY = 2200      // long enough to see "the Coach is thinking…", short enough to forgive
 
@@ -193,6 +194,65 @@ function buildDebrief(S, workoutId) {
   }
 }
 
+/**
+ * Today's targets for the session about to be trained.
+ *
+ * Unlike the other two builders this one reads the context the app sent (lib/session-context.js)
+ * rather than the profile: a session is not in the state yet, so the routine, the recent
+ * sessions and the prescription all travel with the request. Everything below is therefore read
+ * out of `context`, and the same rules the prompt states are applied to it — the numbers that
+ * come back are inside the bounds the app's validator holds, so applying one here exercises the
+ * same code path a live instance would.
+ */
+function buildSession(S, context) {
+  const ex = (context?.routine?.ex || []).slice(0, 20)
+  if (!ex.length) return null
+  const shortSleep = [context.today?.sleepH, context.yesterday?.sleepH]
+    .some(h => Number.isFinite(Number(h)) && Number(h) < 6)
+  const fasted = !!(context.today?.fasted || context.yesterday?.fasted)
+
+  const targets = ex.map(e => {
+    const b = context.base?.[e.id] || {}
+    const t2 = { id: e.id }
+    const rows = context.history?.[e.id] || []
+    const last = rows.at(-1) || null
+    const prev = rows.at(-2) || null
+    // The one signal the demo can always read: did the last session reach the plan it was
+    // opened with. `reps` on a history row is the total across its sets.
+    const wanted = Number(b.reps) > 0 && Number(b.sets) > 0 ? Number(b.reps) * Number(b.sets) : null
+    const missed = !!(wanted != null && last && Number(last.reps) < wanted)
+
+    // A day that is short on sleep or trained fasted holds the jump and takes the extra rest —
+    // the prompt's own cautious-day rule, in the order it states them.
+    if (b.kind === 'up' && (shortSleep || fasted)) {
+      if (prev && Number(prev.weight) > 0) t2.weight = Number(prev.weight)
+      if (b.restSec > 0) t2.restSec = Math.min(300, Math.round(b.restSec) + 30)
+      t2.why = shortSleep
+        ? t('Short sleep — repeating the weight you lifted before this step and taking a little longer between sets.')
+        : t('Training fasted — holding the last weight and resting a little longer rather than climbing.')
+    } else if (b.kind === 'up' && missed) {
+      if (prev && Number(prev.weight) > 0) t2.weight = Number(prev.weight)
+      if (b.restSec > 0) t2.restSec = Math.min(300, Math.round(b.restSec) + 30)
+      t2.why = t('Last session came in under the plan — repeating the previous weight and adding rest before climbing again.')
+    } else if (b.kind === 'deload') {
+      t2.why = t('This is a deload week — the numbers stay where the plan put them so the fatigue has somewhere to go.')
+    } else {
+      t2.why = t('Nothing in the last few sessions argues for a change, so today runs exactly as planned.')
+    }
+    return t2
+  })
+
+  const held = targets.filter(x => Object.keys(x).length > 2).length
+  return {
+    id: 'demo-session', kind: 'session', createdAt: Date.now(), expiresAt: Date.now() + 864e5, iteration: 1,
+    planHash: planHash(S),
+    summary: held
+      ? t('Tuned {0} of {1} exercises against the last few sessions — the rest run exactly as the plan built them.', held, targets.length)
+      : t('Every exercise runs exactly as the plan built it: nothing in the last few sessions argues for a change today.'),
+    targets
+  }
+}
+
 /** What "the room" would say on a busy instance — five people, plausible medians, your real bests. */
 export function demoCohort(S) {
   const since = Date.now() - 56 * 864e5
@@ -246,8 +306,15 @@ export const demoDebrief = (S, workoutId) => {
   if (!(S.workouts || []).some(w => w && w.d)) throw Object.assign(new Error(t('There is no workout to look at yet — log one first.')), { status: 409, code: 'noworkout' })
   return start('debrief', () => buildDebrief(S, workoutId))
 }
+/* Asked from inside a running session, with that session's context. Refused without a routine for
+   the same reason the other two refuse: a job that waits and then produces nothing reads as the
+   Coach ignoring you. */
+export const demoSession = (S, context) => {
+  if (!(context?.routine?.ex || []).length) throw Object.assign(new Error(t('There is no routine to tune yet — the Coach needs the session you are about to train.')), { status: 409, code: 'nosession' })
+  return start('session', () => buildSession(S, context))
+}
 export const demoResolve = () => { pending = null; return { ok: true } }
 export const demoDisclosure = () => ({
   provider: 'demo', providerLabel: t('the configured AI provider'),
-  categories: ['plan', 'training', 'bodyweight', 'profile', 'prefs'], version: 1
+  categories: [...DATA_CATEGORIES], version: 1
 })

@@ -1008,6 +1008,38 @@ export const PT_BR_OVERRIDES = {
   'Teal': 'Turquesa',
   'Yellow': 'Amarelo',
   'Enter how long it took — at least 1 minute.': 'Informe quanto tempo levou — pelo menos 1 minuto.',
+
+  // --- training systems ---
+  'No training system': 'Nenhum sistema de treino',
+  'Progression works exactly as it always has: each routine and each exercise keeps the rule it was given.': 'A progressão funciona exatamente como sempre: cada rotina e cada exercício mantém a regra que recebeu.',
+  'Work up through a rep range at the same weight. Top of the range in every set and the weight goes up, reps back to the bottom.': 'Trabalhe por uma faixa de repetições com o mesmo peso. Atingir o topo da faixa em todas as séries sobe o peso, e as repetições voltam ao começo.',
+  'Two straight sets plus a final set to failure. Beat the target on that set and the weight goes up, double if you double the reps.': 'Duas séries diretas mais uma série final até a falha. Passar do alvo nessa série aumenta o peso; dobrar as repetições dobra o peso.',
+  'Hypertrophy': 'Hipertrofia',
+  'Double progression in a 10-15 rep band, higher weekly volume per muscle and short rests. Progresses when the top of the band is hit in every set.': 'Dupla progressão em uma faixa de 10-15 repetições, mais volume semanal por músculo e descansos curtos. Progride quando o topo da faixa é atingido em todas as séries.',
+  'Low-rep work at a big step, three minutes of rest on the main lifts and few weekly sets per muscle. Deloads only after four failed sessions.': 'Treino de poucas repetições com passo grande, três minutos de descanso nos principais movimentos e poucas séries semanais por músculo. Só reduz a carga depois de quatro sessões fracassadas.',
+  'Training system': 'Sistema de treino',
+  'A system fills in only where an exercise or routine has no rule of its own. Anything you have already set stays as you set it.': 'Um sistema só preenche o que um exercício ou rotina não define. Tudo que você configurou continua como está.',
+  'Your own progression rules decide everything, exactly as before.': 'São as suas próprias regras de progressão que decidem tudo, como antes.',
+  'Let it add or drop a set': 'Deixar que adicione ou tire uma série',
+  'The ledger may change today’s set count by one. Off, it only holds or deloads the weight.': 'O registro pode mudar em um o número de séries de hoje. Desligado, ele só mantém ou reduz a carga.',
+  'Hold on recovery': 'Manter conforme a recuperação',
+  'On a short-recovery day, hold the weight instead of raising it. Needs FitAI connected.': 'Em um dia de recuperação curta, mantém o peso em vez de aumentá-lo. Precisa do FitAI conectado.',
+  '{0} has been over its weekly target for {1} weeks running - back off a step.': '{0} está acima da meta semanal há {1} semanas seguidas — volta um degrau.',
+  '{0} is over its weekly target ({1} hard sets vs {2}) and has not recovered - back off a step.': '{0} está acima da meta semanal ({1} séries duras contra {2}) e não se recuperou — volta um degrau.',
+  '{0} is at its weekly target of {1} hard sets - holding.': '{0} alcançou a meta semanal de {1} séries duras — mantém.',
+  '{0} has not recovered - holding.': '{0} não se recuperou — mantém.',
+  'Weekly targets': 'Metas semanais',
+  'Nothing is over its weekly target this week.': 'Nada está acima da meta semanal nesta semana.',
+  'Apply training system?': 'Aplicar o sistema de treino?',
+  '{0} will set the progression rule for this routine. Anything you have set by hand stays as it is.': '{0} vai definir a regra de progressão desta rotina. Tudo o que você ajustou manualmente continua assim.',
+  'This routine already uses {0}.': 'Esta rotina já usa {0}.',
+  'Apply {0} to this routine': 'Aplicar {0} nesta rotina',
+  'Apply': 'Aplicar',
+  'Remove training system?': 'Remover o sistema de treino?',
+  'This routine stops using {0} and goes back to the progression rule above.': 'Esta rotina deixa de usar {0} e volta à regra de progressão acima.',
+'Remove {0} from this routine': 'Remover {0} desta rotina',
+  // pt-PT says "a app"; Brazilian Portuguese calls it "o aplicativo".
+  '{0}: nothing the app could use.': '{0}: nada que o aplicativo consiga usar.',
 }
 
 export default { ...pt, ...PT_BR_OVERRIDES }

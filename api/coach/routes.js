@@ -105,6 +105,37 @@ export function coachRoutes({ json, readBody, readSession, requireAdmin }) {
       } catch (e) { failEnqueue(res, e); }
     },
 
+    // One session, tuned: the app sends the routine it is about to train, the last few times
+    // each of its exercises was trained, and its own deterministic prescription, and gets back
+    // today's working targets. This is the one job whose answer carries a change the app will
+    // apply to a session in progress, so the context is the app's and is allowlisted field by
+    // field in core/payload.js — nothing here is passed through.
+    'POST /api/coach/session': async (req, res) => {
+      const user = guard(req, res); if (!user) return;
+      const body = await readBody(req);
+      // Only object-shaped fields are taken; an array or a string in one of these slots is not
+      // context, and the builder reads anything else as absent.
+      const objOrNull = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : null);
+      try {
+        const job = jobs.enqueue(user.id, {
+          kind: 'session',
+          lang: body.lang,
+          session: {
+            routine: objOrNull(body.routine),
+            history: objOrNull(body.history),
+            base: objOrNull(body.base),
+            yesterday: objOrNull(body.yesterday),
+            today: objOrNull(body.today)
+          },
+          // The seven-day FitAI window. Client-supplied like the rest of this: the bridge is a
+          // separate service the app reads through its own server, and a phone with its own key
+          // reads it itself. core/payload.js cleans it into the `fuel` block the prompt names.
+          fitai: objOrNull(body.fitai)
+        });
+        json(res, 202, { job });
+      } catch (e) { failEnqueue(res, e); }
+    },
+
     /* Gym-photo scan: images in, suggested equipment out. Synchronous (seconds, not a queued
        job) and human-in-the-loop — the client merges the answer into intake chips the person
        reviews, nothing here writes to any profile. Images live for the one provider call and

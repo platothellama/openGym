@@ -219,7 +219,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <a class="side-link" href="#push"><b>Push</b><span>Notifications &amp; rest timer</span></a>
   <a class="side-link" href="#activity"><b>Activity</b><span>Live presence</span></a>
   <a class="side-link" href="#media"><b>Media</b><span>Photos &amp; videos of your exercises &amp; workouts</span></a>
-  <a class="side-link" href="#coach"><b>AI Coach</b><span>Plans, reviews, debriefs</span></a>
+  <a class="side-link" href="#coach"><b>AI Coach</b><span>Plans, reviews, debriefs, session targets</span></a>
   <a class="side-link" href="#admin"><b>Admin</b><span>Users, invites, audit log, Coach</span></a>
   <a class="side-link" href="#schemas"><b>Schemas</b><span>The state blob, the error shape &amp; co.</span></a>
   <p class="side-label">More</p>
@@ -243,7 +243,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <p class="api-facts">
     <span>OpenAPI 3.1.0</span>
     <span>openGym v1.3.9</span>
-    <span>69 endpoints</span>
+    <span>71 endpoints</span>
     <span>AGPL-3.0-or-later</span>
   </p>
 
@@ -2042,7 +2042,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
 
 <section class="api-sec" id="coach">
   <h2>AI Coach</h2>
-  <p class="sub">AI Coach — plans, reviews and debriefs. Every route here answers 503 unless the instance has the Coach switched on and a provider connected.</p>
+  <p class="sub">AI Coach — plans, reviews, debriefs and one session's targets. Every route here answers 503 unless the instance has the Coach switched on and a provider connected.</p>
   <div class="eps">
 
 <details class="ep" id="op-getCoachDisclosure">
@@ -2132,9 +2132,14 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
 </div>
 <pre><code>{
   &quot;intake&quot;: {
+    &quot;objectives&quot;: [
+      &quot;muscle&quot;,
+      &quot;fatloss&quot;
+    ],
     &quot;goal&quot;: &quot;muscle&quot;,
     &quot;experience&quot;: &quot;novice&quot;,
     &quot;daysPerWeek&quot;: 3,
+    &quot;optionalDays&quot;: 1,
     &quot;equipment&quot;: [
       &quot;dumbbell&quot;,
       &quot;barbell&quot;
@@ -2272,6 +2277,351 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="prow rrow">
     <span class="r-code s5">503</span>
     <span class="p-desc">The Coach is not set up on this instance — switched off, or no provider connected. Every Coach route answers this rather than pretending, so an unconfigured instance renders exactly the app it was before the feature existed.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is not set up on this instance&quot;}</code></span></span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-postCoachSession">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/coach/session</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Tune today's targets for one routine</span>
+  </summary>
+  <div class="ep-body">
+<p>Queues a <code>session</code> job: the working targets for a routine the person is about to train — weight, reps, sets and rest per exercise. Unlike <code>plan</code> and <code>review</code>, this is the one kind whose answer carries numbers the app will write into a session in progress, so the context comes from the app rather than from stored state: core/ is framework-free and cannot recompute the routine or the prescription.</p>
+<p>Every field below is read one at a time through an allowlist and bounded (<code>20</code> exercises, the last <code>5</code> sessions each). Anything not named here, and any value of the wrong shape, reads as absent — it is never passed through. The answer must name every exercise in <code>routine</code> exactly once, stay inside the bounds the prompt states (weight 0-1000, reps 1-100, sets 1-10, sec 5-3600, restSec 0 or 15-300), and carry a <code>why</code> on every target; the two accept/reject routes report which of those was broken.</p>
+<p><code>yesterday</code> and <code>today</code> are the FitAI bridge's single-day blocks, and <code>fitai</code> is its seven-day summary. All three are client-supplied and all three travel only when the profile is linked to FitAI.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span> <span class="p-hint">(optional)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">routine</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">The routine about to be trained. Required in practice: a job sent without one fails as <code>nosession</code> before any provider is called.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.id</span>
+    <span class="p-type">string <span class="p-hint">(&le; 40 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.name</span>
+    <span class="p-type">string <span class="p-hint">(&le; 80 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.prog</span>
+    <span class="p-type"><a href="#schema-ProgressionKind">ProgressionKind</a></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex</span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].id</span>
+    <span class="p-type">string <span class="p-hint">(&le; 24 chars)</span></span>
+    <span class="p-desc">A catalogue or custom exercise id.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].name</span>
+    <span class="p-type">string <span class="p-hint">(&le; 120 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].sets</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].mode</span>
+    <span class="p-type">&quot;reps&quot; | &quot;time&quot; | &quot;cardio&quot;</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].weight</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].reps</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].sec</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].min</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].speed</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].restSec</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].prog</span>
+    <span class="p-type"><a href="#schema-ProgressionKind">ProgressionKind</a></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].inc</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].repsMin</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].repsMax</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].bodyweight</span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">routine.ex[].side</span>
+    <span class="p-type">boolean</span>
+    <span class="p-desc">Reps are the total across both sides and must stay even.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">history</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">Per exercise, the last few times it was trained, oldest first, as <code>{ d, summary, weight, reps }</code>. Capped at 5 per exercise and 20 exercises.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">base</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">The app's own deterministic prescription per exercise, which the Coach is told to adjust rather than reinvent. Also the source of the <code>before</code> column on the card, so it is never taken from the answer.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">yesterday</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">The previous day's FitAI block, if linked. Flattened by the app out of the bridge's whole day (frontend/src/lib/session-context.js <code>fitaiDayBlock</code>); a reading the bridge had nothing for is absent rather than zero.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">yesterday.date</span>
+    <span class="p-type">string</span>
+    <span class="p-desc">ISO date, YYYY-MM-DD.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">yesterday.kcal</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">yesterday.protein</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">yesterday.carbs</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">yesterday.fat</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">yesterday.sleepH</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">yesterday.restingHr</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">yesterday.steps</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">yesterday.activeKcal</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">yesterday.fasting</span>
+    <span class="p-type">string <span class="p-hint">(&le; 24 chars)</span></span>
+    <span class="p-desc">The fast's protocol, when one touched the day.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">Today's FitAI block, if linked and dated. Same shape as <code>yesterday</code>.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today.date</span>
+    <span class="p-type">string</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today.kcal</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today.protein</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today.carbs</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today.fat</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today.sleepH</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today.restingHr</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today.steps</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today.activeKcal</span>
+    <span class="p-type">number</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">today.fasting</span>
+    <span class="p-type">string <span class="p-hint">(&le; 24 chars)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">fitai</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">The seven-day FitAI summary, as the same body block every other kind takes (<code>nutrition</code>, <code>glucose</code>, <code>fasting</code>, <code>health</code>, <code>activity</code>). Client-supplied like the rest of this request: the bridge is a separate service, and a phone that runs the Coach itself reads it without a server. Cleaned into the payload's <code>fuel</code> block field by field; absent when the profile is not linked.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">lang</span>
+    <span class="p-type">string</span>
+    <span class="p-desc">The language the app is showing, which the Coach writes in. Absent or not a language tag, the profile's stored <code>lang</code> is used.</span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">202</span>
+    <span class="p-desc">Queued. The job runs in the background; its outcome arrives through <code>GET /api/coach/status</code>, which the client polls.<span class="r-sig">{ job: object }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409) — a job for this profile is already running. - <code>shared</code> (409) — instance mode, and the credential belongs to another profile. - <code>cap</code> (429) — this profile's or the instance's daily limit is spent. - <code>consent</code> (403) — no consent recorded for this profile. - <code>unprivileged</code> (503) — the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">409</span>
+    <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409) — a job for this profile is already running. - <code>shared</code> (409) — instance mode, and the credential belongs to another profile. - <code>cap</code> (429) — this profile's or the instance's daily limit is spent. - <code>consent</code> (403) — no consent recorded for this profile. - <code>unprivileged</code> (503) — the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">429</span>
+    <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409) — a job for this profile is already running. - <code>shared</code> (409) — instance mode, and the credential belongs to another profile. - <code>cap</code> (429) — this profile's or the instance's daily limit is spent. - <code>consent</code> (403) — no consent recorded for this profile. - <code>unprivileged</code> (503) — the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">The Coach is not set up on this instance — switched off, or no provider connected. Every Coach route answers this rather than pretending, so an unconfigured instance renders exactly the app it was before the feature existed.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is not set up on this instance&quot;}</code></span></span>
+  </div>
+    </div>
+  </div>
+</details>
+
+<details class="ep" id="op-postCoachEquipmentScan">
+  <summary>
+    <span class="m post">POST</span>
+    <span class="ep-path"><code>/api/coach/equipment/scan</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">Suggest equipment from gym photos</span>
+  </summary>
+  <div class="ep-body">
+<p>Sends up to 3 client-downscaled photo data URLs to the configured vision-capable provider and returns suggested taxonomy <code>equipment</code> plus free-text <code>other</code>. The client merges the answer into intake chips the person reviews — nothing here writes to any profile, and images are never stored or logged. Counts against the daily caps like any other spend. Needs a vision-capable HTTPS provider; runtime providers answer 501.</p>
+    <p class="ep-auth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2.5"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Requires a session — the cookie set at sign-in, or <code>Authorization: Bearer &lt;token&gt;</code> from mobile-app pairing.</span></p>
+
+<p class="ep-h">Request body <span class="p-hint">(JSON)</span></p><div class="ptab">
+  <div class="prow">
+    <span class="p-name">images<em class="p-req" title="required">required</em></span>
+    <span class="p-type">string[]</span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">lang</span>
+    <span class="p-type">string</span>
+    <span class="p-desc">The language the app is showing.</span>
+  </div>
+</div>
+    <p class="ep-h">Responses</p>
+    <div class="ptab">
+  <div class="prow rrow">
+    <span class="r-code s2">200</span>
+    <span class="p-desc">Suggestions; review before saving.<span class="r-sig">{ ok: true, equipment: string[], other: string[] }</span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">400</span>
+    <span class="p-desc">The request could not be read — a missing field, the wrong type, or a value outside the bounds this endpoint holds to. Nothing is started and nothing is charged.<span class="r-sig"><code>{&quot;error&quot;:&quot;kind is required&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">401</span>
+    <span class="p-desc">No session, expired/revoked session, or a disabled account.<span class="r-sig"><code>{&quot;error&quot;:&quot;not signed in&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">403</span>
+    <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409) — a job for this profile is already running. - <code>shared</code> (409) — instance mode, and the credential belongs to another profile. - <code>cap</code> (429) — this profile's or the instance's daily limit is spent. - <code>consent</code> (403) — no consent recorded for this profile. - <code>unprivileged</code> (503) — the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s4">429</span>
+    <span class="p-desc">The Coach will not take this job, and says which reason in <code>code</code>: - <code>busy</code> (409) — a job for this profile is already running. - <code>shared</code> (409) — instance mode, and the credential belongs to another profile. - <code>cap</code> (429) — this profile's or the instance's daily limit is spent. - <code>consent</code> (403) — no consent recorded for this profile. - <code>unprivileged</code> (503) — the privilege drop cannot be performed, so no job runs. The message is the one to show; the raw provider detail never reaches the user.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is already thinking about your training&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">501</span>
+    <span class="p-desc">No vision-capable provider configured.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">502</span>
+    <span class="p-desc">The provider answered, and the answer could not be used. The message is for the person holding the key; the raw provider detail never reaches the user.</span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">503</span>
+    <span class="p-desc">The Coach is not set up on this instance — switched off, or no provider connected. Every Coach route answers this rather than pretending, so an unconfigured instance renders exactly the app it was before the feature existed.<span class="r-sig"><code>{&quot;error&quot;:&quot;the Coach is not set up on this instance&quot;}</code></span></span>
+  </div>
+  <div class="prow rrow">
+    <span class="r-code s5">504</span>
+    <span class="p-desc">The scan took too long.</span>
   </div>
     </div>
   </div>
@@ -3756,7 +4106,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   <div class="prow">
     <span class="p-name">at<em class="p-req" title="required">required</em></span>
     <span class="p-type">number</span>
-    <span class="p-desc">When it was attached</span>
+    <span class="p-desc">When it was attached, ms.</span>
   </div>
 </div>
   </div>
@@ -4423,6 +4773,18 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   </div>
 </details>
 
+<details class="ep sch" id="schema-ProgressionKind">
+  <summary>
+    <span class="sch-name"><code>ProgressionKind</code></span>
+    <span class="ep-chev" aria-hidden="true"></span>
+    <span class="ep-sum">The progression engine's policies (frontend/src/lib/progression.js POLICIES).</span>
+  </summary>
+  <div class="ep-body">
+<p>A value outside this list is dropped rather than forwarded, so the app never receives a policy it cannot run.</p>
+<p class="p-desc">Free-form object.</p>
+  </div>
+</details>
+
 <details class="ep sch" id="schema-CoachCap">
   <summary>
     <span class="sch-name"><code>CoachCap</code></span>
@@ -4491,7 +4853,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="ep-sum">The answer waiting for a decision, from whichever kind of job produced it.</span>
   </summary>
   <div class="ep-body">
-<p>It expires 14 days after it was made; the first status poll after that retires it. <code>changes</code> comes from a review, <code>bundle</code> from a plan, <code>score</code>/<code>highlights</code> from a debrief — one of the three, never more.</p>
+<p>It expires 14 days after it was made; the first status poll after that retires it. <code>changes</code> comes from a review, <code>bundle</code> from a plan, <code>score</code>/<code>highlights</code> from a debrief, <code>targets</code> from a session — one of the four, never more.</p>
 <div class="ptab">
   <div class="prow">
     <span class="p-name">id</span>
@@ -4500,7 +4862,7 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   </div>
   <div class="prow">
     <span class="p-name">kind</span>
-    <span class="p-type">&quot;create&quot; | &quot;review&quot; | &quot;debrief&quot;</span>
+    <span class="p-type">&quot;create&quot; | &quot;review&quot; | &quot;debrief&quot; | &quot;session&quot;</span>
     <span class="p-desc"></span>
   </div>
   <div class="prow">
@@ -4614,6 +4976,16 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="p-desc"></span>
   </div>
   <div class="prow">
+    <span class="p-name">bundle.weekOptional</span>
+    <span class="p-type">(integer <span class="p-hint">(0&ndash;6)</span>)[]</span>
+    <span class="p-desc">The optional days, as bare weekday numbers, 0 = Sunday. The Coach names them and the person is free with each one: a <code>create</code> job leaves them empty to fill, and a later plan may put a routine on one. Either is correct, and a skipped optional day is not a missed session. Never a weekday that also appears in <code>week</code>. Absent — rather than empty — when no optional days were asked for.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">bundle.weekRequired</span>
+    <span class="p-type">(integer <span class="p-hint">(0&ndash;6)</span>)[]</span>
+    <span class="p-desc">The required days that have nothing planned on them yet, as bare weekday numbers. A plan is a frequency rather than a list of named days, so a person who trains four days and has planned two still has two slots to fill. Absent — rather than empty — whenever every required day holds a routine, which is the case for every plan a <code>create</code> job returns.</span>
+  </div>
+  <div class="prow">
     <span class="p-name">bundle.routines</span>
     <span class="p-type">object[]</span>
     <span class="p-desc"></span>
@@ -4644,6 +5016,56 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
     <span class="p-desc"></span>
   </div>
   <div class="prow">
+    <span class="p-name">targets</span>
+    <span class="p-type">object[]</span>
+    <span class="p-desc">Today's working targets, from a <code>session</code> job: one per exercise in the routine that was sent, in the routine's order, already inside the prompt's bounds. The client writes the numbers it wants into the live session and leaves every field absent here to the prescription it already had. <code>before</code> is the app's own value for the same field, never the model's, so the card's before→after column is drawn from what the app actually had.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">targets[].id</span>
+    <span class="p-type">string</span>
+    <span class="p-desc">An exercise id from the routine that was sent.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">targets[].name</span>
+    <span class="p-type">string</span>
+    <span class="p-desc">The catalogue name, so the card can name it.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">targets[].weight</span>
+    <span class="p-type">number <span class="p-hint">(0&ndash;1000)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">targets[].reps</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;100)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">targets[].sets</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;10)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">targets[].sec</span>
+    <span class="p-type">integer <span class="p-hint">(5&ndash;3600)</span></span>
+    <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">targets[].restSec</span>
+    <span class="p-type">integer</span>
+    <span class="p-desc">0, or 15-300.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">targets[].why</span>
+    <span class="p-type">string <span class="p-hint">(&le; 600 chars)</span></span>
+    <span class="p-desc">Required on every target.</span>
+  </div>
+  <div class="prow">
+    <span class="p-name">targets[].before</span>
+    <span class="p-type">object</span>
+    <span class="p-desc">What the app's prescription said, for the fields above.</span>
+  </div>
+  <div class="prow">
     <span class="p-name">workout</span>
     <span class="p-type">object</span>
     <span class="p-desc">Which session a debrief read.</span>
@@ -4662,9 +5084,14 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
 <p>Stored in the profile's own state as well; sent here so a plan can be asked for with answers that have not been synced yet.</p>
 <div class="ptab">
   <div class="prow">
+    <span class="p-name">objectives</span>
+    <span class="p-type">string[]</span>
+    <span class="p-desc">What the person is training for, <b>most important first</b>. The order is the answer: the Coach builds the plan for the first entry and serves the rest where they cost that one nothing. Duplicates are dropped, and a client may send more than 3 — the tail is cut rather than rejected. Absent, an empty list promotes <code>goal</code> to a one-item list, so a client that only sends <code>goal</code> still reaches the prompts.</span>
+  </div>
+  <div class="prow">
     <span class="p-name">goal</span>
     <span class="p-type">string</span>
-    <span class="p-desc">e.g. <code>muscle</code>, <code>strength</code>, <code>fat-loss</code>.</span>
+    <span class="p-desc">The single top objective, e.g. <code>muscle</code>, <code>strength</code>, <code>fat-loss</code>. Derived from <code>objectives[0]</code> when both are sent — the list wins, because it is the ranked one. Kept as its own field for older prompts and clients, and where they disagree this is ignored.</span>
   </div>
   <div class="prow">
     <span class="p-name">experience</span>
@@ -4673,13 +5100,18 @@ main.api-main .lead { color: var(--fg-2); max-width: 58ch; margin: 14px 0 0; fon
   </div>
   <div class="prow">
     <span class="p-name">daysPerWeek</span>
-    <span class="p-type">integer</span>
+    <span class="p-type">integer <span class="p-hint">(1&ndash;7)</span></span>
     <span class="p-desc"></span>
+  </div>
+  <div class="prow">
+    <span class="p-name">optionalDays</span>
+    <span class="p-type">integer <span class="p-hint">(0&ndash;4)</span></span>
+    <span class="p-desc">How many of those days are optional — a bonus the person trains when they can. The Coach names the weekday for each and leaves it empty. Absent or 0 means none.</span>
   </div>
   <div class="prow">
     <span class="p-name">preferredDays</span>
     <span class="p-type">integer[]</span>
-    <span class="p-desc">0 = Sunday.</span>
+    <span class="p-desc">Weekday hints, 0 = Sunday. No intake screen collects these any more (a plan is set by frequency and the app lays the week out), but a profile written before that still carries them and they are read as a soft preference.</span>
   </div>
   <div class="prow">
     <span class="p-name">sessionMin</span>

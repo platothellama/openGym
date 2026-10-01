@@ -144,6 +144,104 @@ describe('buildSessionEntries', () => {
   })
 })
 
+// A training system is a fallback layer over the routine's own policy, and the muscle ledger gates
+// what that policy decided. Both are off unless the profile asked for them.
+describe('buildSessionEntries with a training system on', () => {
+  const cfg = { id: '0025', sets: 3, reps: 5, weight: 60, prog: 'off' }
+  const routine = { id: 'r', prog: 'off', ex: [cfg] }
+  const base = { unit: 'kg', exWeights: {}, routines: [], weekStart: 1 }
+  // A clean hit last time, so linear would raise and only the system or the gate can stop it.
+  const hit = weights => ({
+    ...base,
+    trainSystem: 'strength',
+    workouts: [{ d: weights.date, routineIds: ['r'], entries: [{
+      id: cfg.id, target: { sets: 3, reps: 5, weight: 60 },
+      sets: weights.sets.map(w => ({ w, r: 5, rir: 2, done: true }))
+    }] }]
+  })
+  const iso = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0')
+  const dayAgo = n => { const d = new Date(Date.now() - n * 86400000); return iso(d) }
+  // Hypertrophy caps chest at 22 hard sets a week; strength at 6.
+  const weekOfChest = n => ({
+    ...base, trainSystem: 'hypertrophy',
+    workouts: [{ d: dayAgo(1), routineIds: ['r'], entries: [{
+      id: cfg.id, target: { sets: n, reps: 5, weight: 60 },
+      sets: Array.from({ length: n }, () => ({ w: 60, r: 5, rir: 2, done: true }))
+    }] }]
+  })
+
+  it('leaves an explicit routine policy exactly where it is', () => {
+    // prog 'off' on the exercise wins over the system's own policy for the same mode.
+    expect(buildSessionEntries(hit({ date: dayAgo(3), sets: [60, 60, 60] }), routine)[0].plan.kind).toBe('off')
+  })
+
+  it('applies the system policy when the routine names none', () => {
+    const st = hit({ date: dayAgo(3), sets: [60, 60, 60] })
+    const [entry] = buildSessionEntries(st, { id: 'r', ex: [{ ...cfg, prog: undefined }] })
+    expect(entry.plan.kind).toBe('up')
+    expect(entry.target.weight).toBe(62.5)
+  })
+
+  it('fills in the system’s rest where the routine left it out', () => {
+    const st = hit({ date: dayAgo(3), sets: [60, 60, 60] })
+    expect(buildSessionEntries(st, routine)[0].target.restSec).toBe(180)
+  })
+
+  it('never overwrites a rest the exercise already set', () => {
+    const st = hit({ date: dayAgo(3), sets: [60, 60, 60] })
+    expect(buildSessionEntries(st, { ...routine, ex: [{ ...cfg, restSec: 45 }] })[0].target.restSec).toBe(45)
+  })
+
+  it('holds the load at the weekly cap instead of adding the step', () => {
+    const st = weekOfChest(22)
+    const [entry] = buildSessionEntries(st, { id: 'r', ex: [{ ...cfg, prog: 'linear' }] })
+    expect(entry.plan.kind).toBe('hold')
+    expect(entry.target.weight).toBe(60)
+    expect(entry.plan.why[0]).toContain('weekly target')
+  })
+
+  it('deloads a step when the cap has been passed two weeks running', () => {
+    const sets = n => Array.from({ length: n }, () => ({ w: 60, r: 5, rir: 2, done: true }))
+    const st = {
+      ...base, trainSystem: 'hypertrophy',
+      workouts: [
+        { d: dayAgo(1), routineIds: ['r'], entries: [{ id: cfg.id, target: { sets: 24, reps: 5, weight: 60 }, sets: sets(24) }] },
+        { d: dayAgo(8), routineIds: ['r'], entries: [{ id: cfg.id, target: { sets: 24, reps: 5, weight: 60 }, sets: sets(24) }] },
+        { d: dayAgo(3), routineIds: ['r'], entries: [{ id: cfg.id, target: { sets: 3, reps: 5, weight: 60 }, sets: sets(3) }] }
+      ]
+    }
+    const [entry] = buildSessionEntries(st, { id: 'r', ex: [{ ...cfg, prog: 'linear', inc: 2.5 }] })
+    expect(entry.plan.kind).toBe('deload')
+    expect(entry.target.weight).toBe(57.5)
+  })
+
+  it('adds and drops a set only when asked, and never below one', () => {
+    const under = weekOfChest(4)
+    const over = weekOfChest(26)
+    const setsAt = (st, c = cfg) => buildSessionEntries(st, { id: 'r', ex: [{ ...c, prog: 'linear' }] })[0].target.sets
+    expect(setsAt(under)).toBe(3)
+    expect(setsAt({ ...under, muscleAutoSets: true })).toBe(4)
+    expect(setsAt({ ...over, muscleAutoSets: true })).toBe(2)
+    // One set, never none: far over cap, a single-set exercise keeps its one.
+    expect(setsAt({ ...over, muscleAutoSets: true }, { ...cfg, sets: 1 })).toBe(1)
+  })
+
+  it('leaves an excluded routine out of the ledger entirely', () => {
+    const [entry] = buildSessionEntries(weekOfChest(26), { id: 'rehab', excludeFromProgression: true, ex: [cfg] })
+    expect(entry.plan.kind).toBe('off')
+    expect(entry.target.weight).toBe(60)
+    expect(entry.target.restSec).toBeUndefined()   // and no system rest on an excluded routine either
+  })
+
+  it('changes nothing at all with the system off', () => {
+    const st = { ...weekOfChest(26), trainSystem: 'off' }
+    const [entry] = buildSessionEntries(st, { id: 'r', ex: [{ ...cfg, prog: 'linear', inc: 2.5 }] })
+    expect(entry.plan.kind).toBe('up')
+    expect(entry.target.weight).toBe(62.5)
+    expect(entry.target.restSec).toBeUndefined()
+  })
+})
+
 // The mid-session settings sheet edits the plan, so it opens at the plan's sets and reps and at
 // today's weight — never at a prescription's aim, climb or added set (#275).
 describe('plannedConfigOf', () => {

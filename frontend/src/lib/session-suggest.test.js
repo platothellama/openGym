@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { exerciseHistory, readinessOf, adjustPrescription, applySessionTargets, restBaseOf } from './session-suggest.js'
+import { exerciseHistory, readinessOf, adjustPrescription, applySessionTargets, restBaseOf, suggestTargets, readinessLevelOf } from './session-suggest.js'
 
 const ex = (id, sets) => ({ id, sets })
 const done = (w, r) => ({ w, r, done: true })
@@ -84,5 +84,104 @@ describe('applySessionTargets + restBaseOf', () => {
     expect(out[0].sets[1].w).toBe(62.5)
     expect(out[0].sets.filter(s => !s.done).length).toBe(3)
     expect(out[0].target.restSec).toBe(120)
+  })
+  test('keeps the reason on the entry, a fuel line unworded', () => {
+    const entries = [{ id: 'bench', target: { weight: 60, reps: 10, sets: 3 }, sets: [{ w: 60, r: 10, done: false }] }]
+    const out = applySessionTargets(entries, { bench: { weight: 57.5, readiness: 'down', score: 55, line: { kind: 'deficit', kcal: 600 } } })
+    expect(out[0].suggestion).toEqual({ readiness: 'down', score: 55, line: { kind: 'deficit', kcal: 600 } })
+  })
+})
+
+// The training system and its ledger are applied inside session-start.js already, so this
+// overlay must only ever be the readiness pass on top — a second ledger pass here would add
+// the set a set and take off a second increment.
+describe('suggestTargets', () => {
+  const entry = (over = {}) => ({
+    id: 'bench_press',
+    plan: { policy: 'linear', kind: 'up', weight: 62.5, reps: 5 },
+    target: { weight: 62.5, reps: 5, sets: 3, inc: 2.5 },
+    sets: [{ w: 62.5, r: 5, done: false }],
+    ...over,
+  })
+  const deficit = { nutrition: { daysLogged: 7, deficitVsTarget: 600, proteinVsTarget: 0 } }
+
+  test('off by default, so a profile that never chose stays untouched', () => {
+    expect(suggestTargets([entry()], {}, { summary: deficit })).toEqual({})
+    expect(suggestTargets([entry()], { readinessAuto: false }, { summary: deficit })).toEqual({})
+  })
+
+  test('a fueled week or nothing logged is a normal day', () => {
+    const on = { readinessAuto: true }
+    expect(suggestTargets([entry()], on, { summary: null })).toEqual({})
+    expect(suggestTargets([entry()], on, { summary: { nutrition: { daysLogged: 7, deficitVsTarget: 0, proteinVsTarget: 0 } } })).toEqual({})
+    expect(readinessLevelOf(null).level).toBe('ready')
+  })
+
+  test('a deficit holds the earned jump at the weight before it, with the reason', () => {
+    const out = suggestTargets([entry()], { readinessAuto: true }, { summary: deficit })
+    // 62.5 was the jump; holding means the weight before it, never less.
+    expect(out.bench_press.weight).toBe(60)
+    expect(out.bench_press.readiness).toBe('down')
+    expect(out.bench_press.score).toBe(55)
+    // The line is the raw fuel one — the view words it with fuelLineText.
+    expect(out.bench_press.line).toEqual({ kind: 'deficit', kcal: 600 })
+  })
+
+  test('an active fast is cautious, and holds the jump like any short day', () => {
+    const summary = { nutrition: { daysLogged: 7, deficitVsTarget: 0, proteinVsTarget: 0 }, fasting: { active: { elapsedMin: 840 } } }
+    const out = suggestTargets([entry()], { readinessAuto: true }, { summary })
+    expect(out.bench_press.readiness).toBe('cautious')
+    expect(out.bench_press.score).toBe(70)
+    expect(out.bench_press.weight).toBe(60)
+    expect(out.bench_press.line).toEqual({ kind: 'fasted', hours: 14 })
+  })
+
+  test('a down day backs off a hold, but never undoes a deload', () => {
+    const held = entry({ plan: { policy: 'linear', kind: 'hold', weight: 60, reps: 5 }, target: { weight: 60, reps: 5, sets: 3, inc: 2.5 } })
+    const deloaded = entry({ plan: { policy: 'linear', kind: 'deload', weight: 55, reps: 5 }, target: { weight: 55, reps: 5, sets: 3, inc: 2.5 } })
+    expect(suggestTargets([held], { readinessAuto: true }, { summary: deficit }).bench_press.weight).toBe(57.5)
+    expect(suggestTargets([deloaded], { readinessAuto: true }, { summary: deficit })).toEqual({})
+  })
+
+  test('a first session has no earned jump to spend, so nothing moves', () => {
+    const first = entry({ plan: { policy: 'linear', kind: 'first', weight: 60, reps: 5 }, target: { weight: 60, reps: 5, sets: 3, inc: 2.5 } })
+    expect(suggestTargets([first], { readinessAuto: true }, { summary: deficit })).toEqual({})
+  })
+
+  test('the ledger\'s set count is never restated, and its rest only ever grows', () => {
+    // A system's rest and its ±1 set count are already on the entry by this point, so the
+    // overlay must leave the set count to the builder; rest is the one number a short
+    // day legitimately stretches.
+    const built = entry({ target: { weight: 62.5, reps: 5, sets: 4, restSec: 180, inc: 2.5 } })
+    const out = suggestTargets([built], { readinessAuto: true }, { summary: deficit })
+    expect(out.bench_press).not.toHaveProperty('sets')
+    expect(out.bench_press.restSec).toBe(240)
+    expect(out.bench_press.weight).toBe(60)
+  })
+
+  test('applied through applySessionTargets, it moves undone work rows only', () => {
+    const entries = [entry({ sets: [{ w: 62.5, r: 5, done: true }, { w: 62.5, r: 5, done: false }] })]
+    const out = applySessionTargets(entries, suggestTargets(entries, { readinessAuto: true }, { summary: deficit }))
+    expect(out[0].sets[0].w).toBe(62.5)
+    expect(out[0].sets[1].w).toBe(60)
+    expect(out[0].suggestion.readiness).toBe('down')
+  })
+
+  test('a warm-up keeps its ramp: it is not a work row, only an undone one', () => {
+    // A warm-up row is `done: false` like every row waiting to be lifted, so "not done" alone is
+    // not the test. Writing the working weight onto it left the ramp at the work weight, which is
+    // the one thing a warm-up must not be — and it did so on the readiness path too.
+    const warm = { w: 30, r: 10, done: false, phase: 'warmup', warmup: true }
+    const entries = [entry({ sets: [warm, { w: 62.5, r: 5, done: false }] })]
+    const out = applySessionTargets(entries, suggestTargets(entries, { readinessAuto: true }, { summary: deficit }))
+    expect(out[0].sets[0]).toEqual(warm)
+    expect(out[0].sets[1].w).toBe(60)
+  })
+
+  test('the same holds for a timed warm-up and for a per-side warm-up', () => {
+    const held = entry({ sets: [{ sec: 20, w: 20, done: false, phase: 'warmup', warmup: true }, { sec: 45, w: 40, done: false }] })
+    const out = applySessionTargets([held], { 'bench_press': { sec: 30, weight: 30, why: 'shorter holds today' } })
+    expect(out[0].sets[0]).toMatchObject({ sec: 20, w: 20 })
+    expect(out[0].sets[1]).toMatchObject({ sec: 30, w: 30 })
   })
 })

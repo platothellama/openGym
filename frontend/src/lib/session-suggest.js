@@ -12,6 +12,7 @@
 
 import { isWarmupRow, isSideSet, syncSideAggregate } from './workout-model.js'
 import { modeOf, isPerSide } from './history.js'
+import { fuelReadiness, fuelLineOf } from './coach-insights.js'
 
 const num = v => {
   const n = Number(v)
@@ -179,10 +180,89 @@ export function adjustPrescription(base = {}, readiness = { score: 100, level: '
 }
 
 /**
+ * How recovered today is, as the levels adjustPrescription speaks, read off the same
+ * signal the Home fuel card shows (coach-insights.fuelReadiness): a calorie/protein
+ * deficit or an active fast is a short-recovery day. Nothing logged, or a fueled week,
+ * is a normal day and moves nothing. The reason rides along as the raw line rather than
+ * as a sentence — lib/ stays free of i18n and the view words it with fuelLineText(),
+ * which is the line the fuel card already showed.
+ */
+export function readinessLevelOf(summary) {
+  const { state } = fuelReadiness(summary || null)
+  return {
+    state,
+    level: state === 'low' ? 'down' : state === 'fasted' ? 'cautious' : 'ready',
+    score: state === 'low' ? 55 : state === 'fasted' ? 70 : 100,
+    line: fuelLineOf(summary || null),
+  }
+}
+
+/**
+ * The suggested targets for a whole session, keyed by exercise id — the input
+ * shape `applySessionTargets` takes.
+ *
+ * This is the readiness overlay and nothing else. The training system and its muscle
+ * ledger are already inside each entry by the time it gets here: session-start.js
+ * (buildPlannedEntry) is where the gate, the system's rest and the ±1 set count are
+ * decided, so re-deciding them at this point would apply the ledger twice.
+ *
+ * Off — the default, and what a profile written before the setting existed reads as —
+ * it returns {} and the session stands exactly as progression built it.
+ *
+ * Pure, and derived on read like everything else in lib/ — `opts.summary` is the
+ * FitAI summary read for this moment, so a session started later is judged by the day
+ * it is started.
+ */
+export function suggestTargets(entries, S = {}, opts = {}) {
+  const out = {}
+  if (S?.readinessAuto !== true) return out
+  const r = opts.readiness || readinessLevelOf(opts.summary)
+  if (!r || r.level === 'ready') return out
+
+  for (const entry of entries || []) {
+    const id = entry?.id
+    if (!id) continue
+    const plan = entry.plan || {}
+    const target = entry.target || {}
+    // Only the numbers adjustPrescription reads: `kind` is what tells it whether
+    // progression earned a jump that a short day should not spend.
+    const nudged = adjustPrescription(
+      {
+        kind: plan.kind,
+        weight: target.weight,
+        reps: target.reps,
+        sec: target.sec,
+        sets: target.sets,
+        restSec: target.restSec,
+      },
+      { score: r.score, level: r.level, reasons: [] },
+      { mode: modeOf(target), inc: num(target.inc) > 0 ? Number(target.inc) : null, perSide: isPerSide(target) },
+    )
+    const t = {}
+    for (const key of ['weight', 'reps', 'sec', 'restSec']) {
+      if (nudged[key] != null && nudged[key] !== target[key]) t[key] = nudged[key]
+    }
+    // Never propagate the built-in rest when the session already has the system's rest;
+    // that would flag it as "changed" and create a reason where none is needed.
+    if (t.restSec != null && target.restSec != null && t.restSec === target.restSec) delete t.restSec
+    // A day that moved no number has nothing to explain — the card keeps its own reason.
+    if (!Object.keys(t).length) continue
+    out[id] = {
+      ...t,
+      readiness: r.level,
+      score: r.score,
+      ...(r.line ? { line: r.line } : {}),
+    }
+  }
+  return out
+}
+
+/**
  * Auto-fill freshly built session entries with smart targets.
  * Only undone work rows are touched; logged sets, warm-ups and side-set
  * symmetry are preserved. `targets` is keyed by exercise id:
- * `{ [exId]: { weight?, reps?, sets?, sec?, restSec? } }`.
+ * `{ [exId]: { weight?, reps?, sets?, sec?, restSec?, why?, readiness?, score?, muscles?, line? } }`
+ * where `line` is a raw coach-insights fuel line the view words with fuelLineText.
  */
 export function applySessionTargets(entries, targets = {}) {
   return (entries || []).map(entry => {
@@ -198,7 +278,11 @@ export function applySessionTargets(entries, targets = {}) {
     next.target = target
 
     let sets = (entry.sets || []).map(s => {
-      if (s.done) return s
+      // A logged row is what happened and a warm-up is the ramp the planner built for the weight
+      // this target is about to change. Rewriting either would be a lie: a logged set is history,
+      // and a warm-up written at the new working weight is no longer lighter than the set it
+      // warms up for, which is the one thing a warm-up has to be.
+      if (s.done || isWarmupRow(s)) return s
       if (isSideSet(s)) {
         if (t.weight == null && t.reps == null) return s
         const sides = Object.fromEntries(['L', 'R'].map(side => {
@@ -231,7 +315,15 @@ export function applySessionTargets(entries, targets = {}) {
       }
     }
     next.sets = sets
-    if (t.why || t.readiness) next.suggestion = { ...(t.why ? { why: t.why } : {}), ...(t.readiness ? { readiness: t.readiness } : {}), ...(t.score != null ? { score: t.score } : {}) }
+    if (t.why || t.readiness || t.muscles || t.line) {
+      next.suggestion = {
+        ...(t.why ? { why: t.why } : {}),
+        ...(t.readiness ? { readiness: t.readiness } : {}),
+        ...(t.score != null ? { score: t.score } : {}),
+        ...(t.muscles?.length ? { muscles: t.muscles } : {}),
+        ...(t.line ? { line: t.line } : {}),
+      }
+    }
     return next
   })
 }

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { insightsFor, sessionInsights, windowWorkouts } from './coach-insights.js'
+import { insightsFor, sessionInsights, windowWorkouts, fuelReadiness, fuelLineOf } from './coach-insights.js'
 import { EXIDX } from './exercises.js'
 
 // Pick two real catalogue ids from different body parts so the body-part grouping is real.
@@ -94,4 +94,31 @@ describe('sessionInsights', () => {
     expect(r.lifts.every(l => l.prev === null)).toBe(true)
   })
   it('returns null for nothing', () => { expect(sessionInsights(S(), null)).toBeNull() })
+})
+
+// The one line that names a short-recovery week, shared by the Stats note and the workout's
+// readiness nudge so the same week reads the same way in both places.
+describe('fuelReadiness + fuelLineOf', () => {
+  const logged = nut => ({ nutrition: { daysLogged: 7, deficitVsTarget: 0, proteinVsTarget: 0, ...nut } })
+  it('nothing logged or nothing short is a normal week', () => {
+    expect(fuelReadiness(null).state).toBe('unknown')
+    expect(fuelReadiness({}).state).toBe('unknown')
+    expect(fuelReadiness(logged({})).state).toBe('fueled')
+    expect(fuelLineOf(logged({}))).toBeNull()
+    expect(fuelLineOf(null)).toBeNull()
+  })
+  it('names the deficit before the protein gap', () => {
+    const both = logged({ deficitVsTarget: 600.4, proteinVsTarget: 20 })
+    expect(fuelReadiness(both).state).toBe('low')
+    expect(fuelLineOf(both)).toEqual({ kind: 'deficit', kcal: 600 })
+    expect(fuelLineOf(logged({ deficitVsTarget: -100, proteinVsTarget: 20.6 })))
+      .toEqual({ kind: 'protein', grams: 21 })
+  })
+  it('falls back to the running fast, and rounds it down to whole hours', () => {
+    const summary = { ...logged({}), fasting: { active: { elapsedMin: 840 } } }
+    expect(fuelReadiness(summary).state).toBe('fasted')
+    expect(fuelLineOf(summary)).toEqual({ kind: 'fasted', hours: 14 })
+    // Under an hour is not a fast yet.
+    expect(fuelLineOf({ ...logged({}), fasting: { active: { elapsedMin: 30 } } })).toBeNull()
+  })
 })

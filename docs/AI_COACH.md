@@ -176,6 +176,41 @@ score out of ten, what went well, what to watch, and what to do next time, each 
 session's own numbers. A debrief cannot carry a change; an answer that tries is refused by the
 validator rather than trimmed. The card is kept in the Coach's history like everything else.
 
+### Today's targets, mid-workout
+
+**Ask the Coach** lives in the workout's own **⋮** menu, and only while a session is being
+trained: the row is hidden on a past workout being backfilled, in the editor, and before the
+Coach has a profile to reason from, because mid-set is the wrong place for a question of
+"is it switched on at all".
+
+One question is sent: *given the last few times each exercise was trained and this morning's
+recovery, what should this session be?* The answer is a set of working targets for the exercises
+on the screen — shown as what it is now → what the Coach says, each with its reason in the
+model's own words — applied on a tap, per exercise, and undoable for as long as that session is
+open. **It never touches the plan.** The prescription for next week is what the plan is for; this
+is about the session in front of you.
+
+What it can move, and the bounds both ends hold to (`SESSION_TARGET_BOUNDS`, checked on the
+server and again on the client): weight `0–1000`, reps `1–100` and even for per-side exercises,
+sets `1–10`, timed holds `5–3600` seconds, and rest either nothing at all (`0`) or `15–300`
+seconds. An id that is not on the screen, a second target for the same exercise, or a change with
+no reason is refused whole rather than half-applied. Three things the *app* declines to do, and
+says out loud on the card rather than dropping quietly: a load on a bodyweight exercise, a target
+identical to the one already in play, and cardio minutes or speed, which come from the exercise
+rather than from a suggestion.
+
+The session itself is the context: `frontend/src/lib/session-context.js` builds the routine as it
+stands on the screen (not the routine it was built from), the last few counting sessions per
+exercise, and the app's own prescription per exercise as the default. For a profile that linked
+**FitAI**, the seven-day window rides along as it does for a review, plus **yesterday** and
+**today** as single days — averages cannot say "slept four hours" or "trained fasted", and those
+are two of the things this answer is actually about. Nothing extra travels without a linked
+profile.
+
+The job outlives the sheet that started it, and the pending slot is shared with the chat, so an
+answer that lands while you are elsewhere is readable and refusable in the Coach chat too, and the
+menu row waits rather than overwriting a suggestion already waiting there.
+
 ### Comparing with others on the instance
 
 Off unless the admin turns it on (**Settings → Admin dashboard**, the **AI Coach** card →
@@ -247,6 +282,12 @@ A review reads a training block, not a training career: the window is capped at 
 sessions**. Your profile is identified by a stable pseudonym that is never the user id and never
 reversible.
 
+A profile that has linked **FitAI** sends a little more: the window's nutrition, glucose, fasting,
+health and daily-activity summaries — and nothing at all without a link. The consent screen
+renders that same list as categories (see `CATEGORY_TEXT` in `frontend/src/lib/coach.js`), each of
+the last five worded "only if you linked FitAI". A mid-workout ask adds **yesterday** and
+**today** as single days on top of the window, because an average cannot say "slept four hours".
+
 Excluded on purpose and permanently: **display name and user id, passkey and credential
 material, push subscriptions, invite data, theme and appearance settings, and every other
 profile's everything.**
@@ -298,8 +339,10 @@ HTTP client waits as long as the job, and the chat says "this can take a while" 
 promising minutes when the endpoint is a local one. The phone's BYOK mode does the same on
 its own: a local endpoint gets 25 minutes there.
 
-The Coach may only touch **routines and the week**. Your training log, your weigh-ins and your
-settings are not reachable from any change type that exists.
+The Coach may only touch **routines and the week**, plus the working targets of the session you
+are in right now (above — which change the screen, not the plan, and are undoable). Your
+training log, your weigh-ins and your settings are not reachable from any change type that
+exists.
 
 ### The plan is a frequency, not a list of weekdays
 

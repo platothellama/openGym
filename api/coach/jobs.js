@@ -252,9 +252,19 @@ export function enqueue(uid, opts) {
     id: crypto.randomBytes(8).toString('hex'),
     uid,
     forgetSeq: forgetSeq.get(uid) || 0,
-    kind: opts.kind,                                  // 'create' | 'review' | 'debrief'
+    kind: opts.kind,                                  // 'create' | 'review' | 'debrief' | 'session'
     trigger: opts.trigger || 'manual',                // 'manual' | 'scheduled'
     workoutId: opts.workoutId ? String(opts.workoutId).slice(0, 40) : null,
+    // A session job's context is the app's, sent with the request: the routine about to be
+    // trained, the last few times each exercise was trained, and the deterministic prescription
+    // (see the session cleaners in core/payload.js). It lives on the in-memory job only — the
+    // per-profile file holds `current: { id, kind, state }`, and the client still has the state
+    // that produced it. payload.js bounds every field.
+    session: opts.kind === 'session' ? (opts.session || null) : null,
+    // The seven-day FitAI window for a session, from the client for the same reason: the bridge
+    // is not ours, a phone that brought its own key has no server to read it from, and the fuel
+    // block is the recovery half of what a session answer is for.
+    fitai: opts.kind === 'session' ? (opts.fitai || null) : null,
     intake: opts.intake || null,
     note: clampMessage(opts.note),
     refine: clampMessage(opts.refine),
@@ -343,13 +353,24 @@ async function execute(job) {
     refine: job.refine,
     previous: pendingCreate?.bundle || null,
     workoutId: job.workoutId,
+    session: job.session,
+    // The seven-day FitAI window, client-supplied like the session itself: a phone can ask
+    // without a signed-in server to read it from, and the bridge is a service of the client's.
+    // In-memory only, and payload.js bounds and cleans it like every other field.
+    fitai: job.kind === 'session' ? (job.fitai || null) : null,
     // The app says which language it is in. A scheduled review has no app behind it: a profile
     // that never picked a language then gets the instance's DEFAULT_LANG, like its screens do.
     lang: job.lang || (S.langAuto === true ? payloadLib.langTag(process.env.DEFAULT_LANG) : null),
     // The room's medians ride along on a review or a debrief when the admin allows it and
     // this person opted in; null otherwise, and the payload then carries no `cohort` at all.
+    // Never on a session: there is nobody to compare one afternoon's prescription with.
     cohort: (job.kind === 'review' || job.kind === 'debrief') ? cohortForPayload(job.uid) : null
   });
+  // A session job with no routine has nothing to tune, and every answer the provider could give
+  // would then be refused for a reason it cannot fix. Failed here, before a call is billed.
+  if (job.kind === 'session' && !(payload.routine?.ex || []).length) {
+    return finish(job, { outcome: 'failed', errorClass: 'nosession' });
+  }
   // The payload is paid for with the instance's key, and it is built from state the client
   // wrote. The builder bounds each field; a payload that is still bigger than any real training
   // history makes is refused here, before a provider is called, rather than sent and billed.
